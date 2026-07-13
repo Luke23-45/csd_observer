@@ -188,7 +188,7 @@ def test_metrics_functions() -> None:
     assert 0.0 <= fpr <= 1.0
 
     features = np.random.randn(B, T, C).astype(np.float32)
-    scores = raw_csd_indicator(features, window_size=10)
+    scores = raw_csd_indicator(features, seq_lens, window_size=10)
     assert scores.shape == (B, T)
 
 

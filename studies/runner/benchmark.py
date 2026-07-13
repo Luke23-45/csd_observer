@@ -113,7 +113,126 @@ def _build_dataset_for_system(
     return build_dataset(system, **kwargs)
 
 
-def _run_system_experiment(
+
+def _run_empirical_experiment(
+    system: str,
+    arrays_signal: dict,
+    arrays_null: dict,
+    *,
+    config: dict,
+    device: torch.device,
+    writer: OutputWriter,
+) -> SystemResult:
+    # 1. Merge the arrays for training on both
+    B_sig = len(arrays_signal["is_positive"])
+    features = np.concatenate([arrays_signal["features"], arrays_null["features"]], axis=0)
+    seq_lengths = np.concatenate([arrays_signal["seq_lengths"], arrays_null["seq_lengths"]], axis=0)
+    bifurcation_times = np.concatenate([arrays_signal["bifurcation_times"], arrays_null["bifurcation_times"]], axis=0)
+    is_positive = np.concatenate([arrays_signal["is_positive"], arrays_null["is_positive"]], axis=0)
+    
+    split_indices = {}
+    for split in ("train", "val", "test"):
+        idx_sig = arrays_signal["split_indices"][split]
+        idx_null = arrays_null["split_indices"][split] + B_sig
+        split_indices[split] = np.concatenate([idx_sig, idx_null])
+        
+    merged_dataset = {
+        "features": features,
+        "seq_lengths": seq_lengths,
+        "bifurcation_times": bifurcation_times,
+        "is_positive": is_positive,
+        "split_indices": split_indices,
+    }
+    
+    tensors_merged = tensorize(merged_dataset, device)
+    
+    train_idx = merged_dataset["split_indices"]["train"]
+    val_idx = merged_dataset["split_indices"]["val"]
+    
+    test_idx_s = arrays_signal["split_indices"]["test"]
+    test_idx_n = arrays_null["split_indices"]["test"]
+    
+    tensors_signal = tensorize(arrays_signal, device)
+    tensors_null = tensorize(arrays_null, device)
+
+    data_cfg = config.get("data", {})
+    n_seeds = data_cfg.get("n_seeds", 5)
+    seed_offset = data_cfg.get("seed_offset", 0)
+    seeds = [seed_offset + 101 + 101 * i for i in range(n_seeds)]
+
+    runs: List[RunResult] = []
+
+    csd_scores_test = raw_csd_indicator(arrays_signal["features"][test_idx_s], arrays_signal["seq_lengths"][test_idx_s], 30)
+    csd_scores_null_test = raw_csd_indicator(arrays_null["features"][test_idx_n], arrays_null["seq_lengths"][test_idx_n], 30)
+    raw_metrics = evaluate_raw_csd(
+        csd_scores_test,
+        arrays_signal["bifurcation_times"][test_idx_s],
+        arrays_signal["is_positive"][test_idx_s],
+        arrays_signal["seq_lengths"][test_idx_s],
+        csd_scores_null_test,
+        arrays_null["seq_lengths"][test_idx_n],
+        threshold=0.6,
+    )
+    runs.append(RunResult(method="Raw-CSD", seed=0, metrics=raw_metrics))
+    writer.write_result_row({"system": system, "seed": 0, "method": "Raw-CSD", **raw_metrics})
+
+    methods_list = [
+        ("Kalman-BCE", "bce"),
+        ("Kalman-LSTM", "lstm"),
+        ("Kalman-LSTM-Spec", "lstm_spec"),
+    ]
+    total = len(seeds) * len(methods_list)
+    pbar = tqdm(total=total, desc=f"{system}", unit="run", leave=False)
+    for seed in seeds:
+        for method_name, loss_type in methods_list:
+            pbar.set_description(f"{system} {method_name}")
+            
+            # TRAIN on merged dataset
+            model = train_kalman(
+                tensors_merged, train_idx, val_idx,
+                loss_type=loss_type, seed=seed, config=config, device=device,
+            )
+
+            # EVALUATE on separate signal/null (just like synthetic!)
+            probs_test = build_probs(model, tensors_signal, test_idx_s)
+            probs_null = build_probs(model, tensors_null, test_idx_n)
+            
+            # Use merged val for threshold selection
+            probs_val = build_probs(model, tensors_merged, val_idx)
+            thresh = select_threshold(
+                probs_val,
+                merged_dataset["bifurcation_times"][val_idx],
+                merged_dataset["is_positive"][val_idx],
+                merged_dataset["seq_lengths"][val_idx],
+            )
+
+            dt = compute_detection_time(
+                probs_test,
+                arrays_signal["bifurcation_times"][test_idx_s],
+                arrays_signal["is_positive"][test_idx_s],
+                arrays_signal["seq_lengths"][test_idx_s],
+                thresh,
+            )
+            ewa = compute_early_warning_auc(
+                probs_test,
+                arrays_signal["bifurcation_times"][test_idx_s],
+                arrays_signal["is_positive"][test_idx_s],
+                arrays_signal["seq_lengths"][test_idx_s],
+                probs_null,
+                arrays_null["seq_lengths"][test_idx_n],
+            )
+            null_met = compute_null_metrics(probs_null, thresh, arrays_null["seq_lengths"][test_idx_n])
+
+            metrics = {"detection_time": dt, "ew_auc": ewa, **null_met}
+            runs.append(RunResult(method=method_name, seed=seed, metrics=metrics))
+            writer.write_result_row({"system": system, "seed": seed, "method": method_name, **metrics})
+            pbar.update(1)
+    pbar.close()
+
+    return SystemResult(system=system, runs=runs)
+
+
+def _run_synthetic_experiment(
     system: str,
     tensors_signal: TensorizedDataset,
     tensors_null: TensorizedDataset,
@@ -310,10 +429,17 @@ def _run_single(run_name: str, n_seeds_override: Optional[int] = None) -> None:
 
     for system in systems:
         if system in _REAL_SYSTEMS:
-            print(f"--- Loading {system} dataset ---")
+            print(f"--- Loading {system} dataset (Empirical Pipeline) ---")
             arrays_signal, arrays_null = _REAL_SYSTEMS[system]()
+            
+            print(f"  signal: {arrays_signal['features'].shape}, null: {arrays_null['features'].shape}")
+            
+            sys_res = _run_empirical_experiment(
+                system, arrays_signal, arrays_null,
+                config=config, device=device, writer=writer,
+            )
         else:
-            print(f"--- Generating {system} data ---")
+            print(f"--- Generating {system} data (Synthetic Pipeline) ---")
             data_kwargs = dict(
                 n_trajectories=n_patients, noise_scale=noise_scale,
                 obs_noise_scale=obs_noise_scale, max_length=max_length,
@@ -324,17 +450,17 @@ def _run_single(run_name: str, n_seeds_override: Optional[int] = None) -> None:
             arrays_null = _build_dataset_for_system(
                 system, null=True, seed=seed_offset + 202, **data_kwargs,
             )
-        print(f"  signal: {arrays_signal['features'].shape}, "
-              f"null: {arrays_null['features'].shape}")
-
-        tensors_signal = tensorize(arrays_signal, device)
-        tensors_null = tensorize(arrays_null, device)
-
-        sys_res = _run_system_experiment(
-            system, tensors_signal, tensors_null,
-            arrays_signal, arrays_null,
-            config=config, device=device, writer=writer,
-        )
+            
+            print(f"  signal: {arrays_signal['features'].shape}, null: {arrays_null['features'].shape}")
+            
+            tensors_signal = tensorize(arrays_signal, device)
+            tensors_null = tensorize(arrays_null, device)
+            
+            sys_res = _run_synthetic_experiment(
+                system, tensors_signal, tensors_null,
+                arrays_signal, arrays_null,
+                config=config, device=device, writer=writer,
+            )
 
         agg = sys_res.aggregate()
         all_metrics[system] = agg
