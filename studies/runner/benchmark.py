@@ -19,7 +19,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Tuple
 
 import numpy as np
 import torch
@@ -51,6 +51,7 @@ from csd_observer.utils.metrics import (  # noqa: E402
 
 SYSTEMS = ("fold", "hopf", "logistic")
 METHODS = ("Raw-CSD", "Kalman-BCE", "Kalman-LSTM", "Kalman-LSTM-Spec")
+_REAL_SYSTEMS: Dict[str, Callable] = {}
 
 
 @dataclass(frozen=True)
@@ -131,12 +132,12 @@ def _run_system_experiment(
 
     n_seeds = data_cfg.get("n_seeds", 5)
     seed_offset = data_cfg.get("seed_offset", 0)
-    seeds = [101 + 101 * i for i in range(n_seeds)]
+    seeds = [seed_offset + 101 + 101 * i for i in range(n_seeds)]
 
     runs: List[RunResult] = []
 
-    csd_scores_test = raw_csd_indicator(arrays_signal["features"][test_idx_s], 30)
-    csd_scores_null_test = raw_csd_indicator(arrays_null["features"][test_idx_n], 30)
+    csd_scores_test = raw_csd_indicator(arrays_signal["features"][test_idx_s], arrays_signal["seq_lengths"][test_idx_s], 30)
+    csd_scores_null_test = raw_csd_indicator(arrays_null["features"][test_idx_n], arrays_null["seq_lengths"][test_idx_n], 30)
     raw_metrics = evaluate_raw_csd(
         csd_scores_test,
         arrays_signal["bifurcation_times"][test_idx_s],
@@ -290,18 +291,27 @@ def _run_single(run_name: str) -> None:
     all_metrics: Dict[str, Dict[str, Dict[str, float]]] = {}
     started = time.time()
 
+    # Lazy-register real dataset builders
+    if "chick_heart" in systems and "chick_heart" not in _REAL_SYSTEMS:
+        from csd_observer.data.chick_heart import build_benchmark_datasets as _ch
+        _REAL_SYSTEMS["chick_heart"] = _ch
+
     for system in systems:
-        print(f"--- Generating {system} data ---")
-        data_kwargs = dict(
-            n_trajectories=n_patients, noise_scale=noise_scale,
-            obs_noise_scale=obs_noise_scale, max_length=max_length,
-        )
-        arrays_signal = _build_dataset_for_system(
-            system, null=False, seed=seed_offset + 101, **data_kwargs,
-        )
-        arrays_null = _build_dataset_for_system(
-            system, null=True, seed=seed_offset + 202, **data_kwargs,
-        )
+        if system in _REAL_SYSTEMS:
+            print(f"--- Loading {system} dataset ---")
+            arrays_signal, arrays_null = _REAL_SYSTEMS[system]()
+        else:
+            print(f"--- Generating {system} data ---")
+            data_kwargs = dict(
+                n_trajectories=n_patients, noise_scale=noise_scale,
+                obs_noise_scale=obs_noise_scale, max_length=max_length,
+            )
+            arrays_signal = _build_dataset_for_system(
+                system, null=False, seed=seed_offset + 101, **data_kwargs,
+            )
+            arrays_null = _build_dataset_for_system(
+                system, null=True, seed=seed_offset + 202, **data_kwargs,
+            )
         print(f"  signal: {arrays_signal['features'].shape}, "
               f"null: {arrays_null['features'].shape}")
 

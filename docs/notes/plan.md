@@ -17,3 +17,11 @@ python studies/runner/benchmark.py low_data
 
 # Outputs in outputs/benchmark/<run_name>/<timestamp>/
 ```
+
+
+# Run the chick_heart benchmark (5 seeds × 3 methods)
+python studies/runner/benchmark.py chick_heart
+
+# Or clear cached data and re-run:
+rm -rf data/chick_heart/
+python studies/runner/benchmark.py chick_heart

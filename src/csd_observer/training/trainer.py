@@ -27,10 +27,14 @@ class TensorizedDataset:
 
 
 def tensorize(dataset: Dict, device: torch.device) -> TensorizedDataset:
+    B, T, D = dataset["features"].shape
+    seq_lens = torch.tensor(dataset["seq_lengths"], dtype=torch.long, device=device)
+    t = torch.arange(T, device=device).unsqueeze(0).unsqueeze(-1).expand(B, T, D)
+    masks = (t < seq_lens.unsqueeze(1).unsqueeze(-1)).float()
     return TensorizedDataset(
         features=torch.tensor(dataset["features"], dtype=torch.float32, device=device),
-        masks=torch.ones(dataset["features"].shape, dtype=torch.float32, device=device),
-        seq_lengths=torch.tensor(dataset["seq_lengths"], dtype=torch.long, device=device),
+        masks=masks,
+        seq_lengths=seq_lens,
         bifurcation_times=torch.tensor(dataset["bifurcation_times"], dtype=torch.float32, device=device),
         is_positive=torch.tensor(dataset["is_positive"], dtype=torch.bool, device=device),
     )

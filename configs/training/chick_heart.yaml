@@ -1,0 +1,8 @@
+epochs: 100
+batch_size: 8
+lr: 0.001
+weight_decay: 0.00001
+patience: 10
+spectral_radius_weight: 0.1
+spectral_threshold: 0.95
+scheduler_eta_min: 0.000001

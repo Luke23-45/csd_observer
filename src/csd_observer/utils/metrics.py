@@ -8,14 +8,15 @@ from sklearn.metrics import roc_auc_score, roc_curve
 W_LABEL = 60
 
 
-def raw_csd_indicator(features: np.ndarray, window_size: int = 30) -> np.ndarray:
+def raw_csd_indicator(features: np.ndarray, seq_lengths: np.ndarray, window_size: int = 30) -> np.ndarray:
     B, T, C = features.shape
     W = min(window_size, T)
     scores = np.zeros((B, T), dtype=np.float32)
     for b in range(B):
+        L = int(seq_lengths[b])
         for c in range(C):
             seq = features[b, :, c]
-            for t in range(W, T):
+            for t in range(W, L):
                 seg = seq[t - W : t]
                 seg_c = seg - seg.mean()
                 num = np.sum(seg_c[:-1] * seg_c[1:])

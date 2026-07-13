@@ -1,0 +1,14 @@
+source_url: &source_url https://raw.githubusercontent.com/ThomasMBury/dl_discrete_bifurcation/main/data/df_chick.csv
+
+detection:
+  bandwidth: 60           # Gaussian detrend kernel bandwidth
+  rolling_window: 10      # window size for return-map slope
+  slope_threshold: -0.95  # return-map slope threshold
+  consecutive_beats: 10   # consecutive beats below threshold
+
+split:
+  train_frac: 0.6
+  val_frac: 0.2
+  seed: 1042
+
+max_length: 861  # longest trajectory in raw data (pd tsid=3: 861 beats)
