@@ -65,8 +65,10 @@ def prepare(
         group = df[mask].sort_values("Beat number")
         ibi = group["IBI (s)"].values.astype(np.float32)
         L = len(ibi)
+        mu, std = ibi.mean(), ibi.std()
+        ibi_norm = (ibi - mu) / (std + 1e-8) if std > 1e-8 else np.zeros_like(ibi)
 
-        features[i, :L, 0] = ibi
+        features[i, :L, 0] = ibi_norm
         seq_lengths[i] = L
         is_positive[i] = (typ == "pd")
 

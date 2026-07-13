@@ -16,7 +16,6 @@ def build_benchmark_datasets(
         force_prepare=force_prepare,
     )
     is_pos = combined["is_positive"]
-    pos_idx = np.where(is_pos)[0]
     neg_idx = np.where(~is_pos)[0]
 
     def _subset(global_idx: np.ndarray) -> Dict[str, np.ndarray]:
@@ -33,7 +32,13 @@ def build_benchmark_datasets(
             "split_indices": new_splits,
         }
 
-    arrays_signal = _subset(pos_idx)
+    arrays_signal = {
+        "features": combined["features"],
+        "seq_lengths": combined["seq_lengths"],
+        "bifurcation_times": combined["bifurcation_times"],
+        "is_positive": combined["is_positive"],
+        "split_indices": combined["split_indices"],
+    }
     arrays_null = _subset(neg_idx)
     return arrays_signal, arrays_null
 

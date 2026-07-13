@@ -90,6 +90,11 @@ def select_threshold(
             labels.append(0)
     if len(set(labels)) < 2:
         return 0.5
+    score_arr = np.array(scores)
+    if np.std(score_arr) < 1e-6:
+        return 0.5
+    if np.ptp(score_arr) < 0.01:
+        return float(np.median(score_arr))
     fpr, tpr, thresholds = roc_curve(labels, scores)
     best_idx = np.argmin(np.abs(tpr - target_sensitivity))
     return float(thresholds[best_idx])

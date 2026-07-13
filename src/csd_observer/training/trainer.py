@@ -45,8 +45,10 @@ def _make_targets(
     seq_lengths: torch.Tensor,
     device: torch.device,
     max_length: int = 200,
-    sigma: float = 60.0,
+    sigma: Optional[float] = None,
 ) -> torch.Tensor:
+    if sigma is None:
+        sigma = 60.0
     B = bifurcation_times.shape[0]
     t = torch.arange(max_length, device=device).float().unsqueeze(0).expand(B, -1)
     tau = bifurcation_times.unsqueeze(1).float()
@@ -103,6 +105,7 @@ def train_kalman(
     spec_weight = train_cfg.get("spectral_radius_weight", 0.1)
     spec_threshold = train_cfg.get("spectral_threshold", 0.95)
     scheduler_eta_min = train_cfg.get("scheduler_eta_min", 1e-6)
+    target_sigma = train_cfg.get("target_sigma", None)
     max_length = x_train.shape[1]
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -128,7 +131,7 @@ def train_kalman(
 
             targets = _make_targets(
                 bif_train[batch_ids], lens_train[batch_ids], device,
-                max_length=max_length,
+                max_length=max_length, sigma=target_sigma,
             )
             valid_mask = (
                 torch.arange(max_length, device=device).unsqueeze(0)
@@ -153,7 +156,7 @@ def train_kalman(
         model.eval()
         with torch.no_grad():
             logits_val, zs_val, A_val, K_val, C_val = model(x_val, m_val)
-            targets_val = _make_targets(bif_val, lens_val, device, max_length=max_length)
+            targets_val = _make_targets(bif_val, lens_val, device, max_length=max_length, sigma=target_sigma)
             valid_mask_val = (
                 torch.arange(max_length, device=device).unsqueeze(0)
                 < lens_val.unsqueeze(1)

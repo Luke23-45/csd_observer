@@ -19,7 +19,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -256,17 +256,29 @@ def _summarize_system(agg: Dict[str, Dict[str, float]], system: str) -> None:
         print(f"{method:<20s} {dt_s:>10s} {ewa_s:>10s} {fpr_s:>10s}")
 
 
-def _parse_args() -> List[str]:
-    if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
-        print(__doc__)
-        sys.exit(0)
-    return sys.argv[1:] if len(sys.argv) > 1 else ["default", "high_noise", "low_data"]
+def _parse_args() -> Tuple[List[str], Optional[int]]:
+    n_seeds_override: Optional[int] = None
+    run_names: List[str] = []
+    for arg in sys.argv[1:]:
+        if arg.startswith("n_seeds="):
+            n_seeds_override = int(arg.split("=", 1)[1])
+        elif arg in ("-h", "--help"):
+            print(__doc__)
+            sys.exit(0)
+        else:
+            run_names.append(arg)
+    if not run_names:
+        run_names = ["default", "high_noise", "low_data"]
+    return run_names, n_seeds_override
 
 
-def _run_single(run_name: str) -> None:
+def _run_single(run_name: str, n_seeds_override: Optional[int] = None) -> None:
     print(f"Loading config: {run_name}")
     config = load_config(run_name)
     data_cfg = config.get("data", {})
+    if n_seeds_override is not None:
+        data_cfg["n_seeds"] = n_seeds_override
+        print(f"  [override] n_seeds={n_seeds_override}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
@@ -350,7 +362,7 @@ def _run_single(run_name: str) -> None:
 
 
 def main() -> None:
-    run_names = _parse_args()
+    run_names, n_seeds_override = _parse_args()
     total_started = time.time()
     for i, run_name in enumerate(run_names, 1):
         tag = f"[{i}/{len(run_names)}] " if len(run_names) > 1 else ""
@@ -358,7 +370,7 @@ def main() -> None:
         print(f"{tag}RUN: {run_name}")
         print(f"{tag}{'='*70}")
         try:
-            _run_single(run_name)
+            _run_single(run_name, n_seeds_override)
         except Exception as e:
             print(f"\nERROR: {run_name} failed: {e}")
             continue
