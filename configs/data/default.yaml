@@ -1,0 +1,8 @@
+noise_scale: 0.15
+n_patients: 500
+systems: [fold, hopf, logistic]
+max_length: 200
+n_seeds: 5
+seed_offset: 0
+null_seed_offset: 100
+split_seed: 1000

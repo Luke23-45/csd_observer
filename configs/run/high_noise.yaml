@@ -1,0 +1,5 @@
+_data: default
+_model: default
+_training: default
+data:
+  noise_scale: 0.30
