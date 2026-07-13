@@ -84,7 +84,7 @@ def select_threshold(
         for t in range(window, min(T, int(tau))):
             scores.append(val_probs[i, t])
             labels.append(1)
-        for t in range(0, window):
+        for t in range(0, max(window - 1, 0)):
             scores.append(val_probs[i, t])
             labels.append(0)
     if len(set(labels)) < 2:

@@ -95,6 +95,7 @@ def _build_dataset_for_system(
     null: bool,
     n_trajectories: int,
     noise_scale: float,
+    obs_noise_scale: float | None = None,
     seed: int,
     max_length: int = 200,
 ) -> dict:
@@ -104,6 +105,7 @@ def _build_dataset_for_system(
         n_trajectories=n_trajectories,
         max_length=max_length,
         noise_scale=noise_scale,
+        obs_noise_scale=obs_noise_scale,
         seed=seed,
         null=null,
     )
@@ -129,7 +131,7 @@ def _run_system_experiment(
 
     n_seeds = data_cfg.get("n_seeds", 5)
     seed_offset = data_cfg.get("seed_offset", 0)
-    seeds = [seed_offset + 101 * i for i in range(n_seeds)]
+    seeds = [101 + 101 * i for i in range(n_seeds)]
 
     runs: List[RunResult] = []
 
@@ -281,6 +283,7 @@ def _run_single(run_name: str) -> None:
     max_length = data_cfg.get("max_length", 200)
     n_patients = data_cfg.get("n_patients", 500)
     noise_scale = data_cfg.get("noise_scale", 0.15)
+    obs_noise_scale = data_cfg.get("obs_noise_scale")
     seed_offset = data_cfg.get("seed_offset", 0)
 
     system_results: Dict[str, Tuple[bool, str]] = {}
@@ -289,15 +292,15 @@ def _run_single(run_name: str) -> None:
 
     for system in systems:
         print(f"--- Generating {system} data ---")
-        arrays_signal = _build_dataset_for_system(
-            system, null=False,
+        data_kwargs = dict(
             n_trajectories=n_patients, noise_scale=noise_scale,
-            seed=seed_offset + 101, max_length=max_length,
+            obs_noise_scale=obs_noise_scale, max_length=max_length,
+        )
+        arrays_signal = _build_dataset_for_system(
+            system, null=False, seed=seed_offset + 101, **data_kwargs,
         )
         arrays_null = _build_dataset_for_system(
-            system, null=True,
-            n_trajectories=n_patients, noise_scale=noise_scale,
-            seed=seed_offset + 202, max_length=max_length,
+            system, null=True, seed=seed_offset + 202, **data_kwargs,
         )
         print(f"  signal: {arrays_signal['features'].shape}, "
               f"null: {arrays_null['features'].shape}")
@@ -344,7 +347,11 @@ def main() -> None:
         print(f"\n{tag}{'='*70}")
         print(f"{tag}RUN: {run_name}")
         print(f"{tag}{'='*70}")
-        _run_single(run_name)
+        try:
+            _run_single(run_name)
+        except Exception as e:
+            print(f"\nERROR: {run_name} failed: {e}")
+            continue
     total_elapsed = time.time() - total_started
     print(f"\n{'='*70}")
     print(f"All runs complete. Total time: {total_elapsed:.1f}s")

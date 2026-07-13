@@ -20,19 +20,19 @@ class OutputWriter:
 
     def write_config(self, config: Dict[str, Any]) -> Path:
         path = self.root / "configs" / "resolved.yaml"
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             yaml.dump(config, f, default_flow_style=False)
         return path
 
     def write_metrics(self, metrics: Dict[str, Any]) -> Path:
         path = self.root / "metrics" / "metrics.json"
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(metrics, f, indent=2, default=str)
         return path
 
     def write_result_row(self, row: Dict[str, Any]) -> None:
         path = self.root / "results" / "results.jsonl"
-        with open(path, "a") as f:
+        with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(row, default=str) + "\n")
 
     @property

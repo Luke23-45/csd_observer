@@ -20,7 +20,7 @@ def load_config(
     if not run_path.exists():
         raise FileNotFoundError(f"Run config not found: {run_path}")
 
-    with open(run_path) as f:
+    with open(run_path, encoding="utf-8") as f:
         raw: dict = yaml.safe_load(f) or {}
 
     meta_refs = {k: raw.get(k) for k in ("_data", "_model", "_training")}
@@ -31,8 +31,8 @@ def load_config(
             return {}
         path = config_root / subdir / f"{ref}.yaml"
         if not path.exists():
-            return {}
-        with open(path) as f:
+            raise FileNotFoundError(f"Config template not found: {path}")
+        with open(path, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
 
     data_cfg = _load_ref("data", meta_refs["_data"])

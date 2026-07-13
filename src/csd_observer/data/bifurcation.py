@@ -224,6 +224,7 @@ def build_dataset(
     n_trajectories: int = 500,
     max_length: int = 200,
     noise_scale: float = 0.30,
+    obs_noise_scale: float | None = None,
     seed: int = 42,
     null: bool = False,
 ) -> Dict[str, np.ndarray]:
@@ -233,6 +234,8 @@ def build_dataset(
             f"Unknown system: {system!r}. Valid options: {sorted(_VALID_SYSTEMS)}"
         )
     kwargs = dict(n_trajectories=n_trajectories, max_length=max_length, seed=seed, null=null)
+    if obs_noise_scale is not None:
+        kwargs["obs_noise_scale"] = obs_noise_scale
     if system == "fold":
         return FoldBifurcationDataset(noise_scale=noise_scale, **kwargs).generate()
     elif system == "hopf":

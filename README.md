@@ -1,4 +1,4 @@
-# Kalman-LSTM: Adaptive Critical-Slowing-Down Observer
+# CSD Observer: Adaptive Critical-Slowing-Down Observer
 
 Replaces the per-step MLP head of a Kalman filter with a causal LSTM head to detect temporal CSD patterns (rising autocorrelation, slowing recovery) that a static per-step head cannot see.
 
