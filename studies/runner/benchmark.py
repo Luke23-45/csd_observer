@@ -220,7 +220,7 @@ def _run_empirical_experiment(
                 test_idx = split["test"]
                 test_mask_sig = test_idx < B_sig
                 test_idx_s = test_idx[test_mask_sig]
-                test_idx_n = test_idx[~test_mask_sig]
+                test_idx_n = test_idx[~test_mask_sig] - B_sig
 
                 val_arrays_local = {
                     "is_positive": is_positive,
