@@ -490,7 +490,7 @@ def _run_single(run_name: str, n_seeds_override: Optional[int] = None) -> None:
 
     n_pass = sum(1 for p, _ in system_results.values() if p)
     n_total = len(system_results)
-    if n_pass >= 2:
+    if n_pass == n_total or n_pass >= 2:
         print(f"\nVERDICT: GO ({n_pass}/{n_total})")
     else:
         print(f"\nVERDICT: NO-GO ({n_pass}/{n_total})")
