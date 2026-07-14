@@ -187,7 +187,7 @@ def train_kalman(
 
     model = CSDKalmanObserver(
         input_dim=n_features,
-        latent_dim=model_cfg.get("latent_dim", 4),
+        latent_dim=model_cfg.get("latent_dim", 8 if use_parity else 4),
         lstm_head=use_lstm,
         lstm_dim=model_cfg.get("lstm_dim", 8),
         dropout=model_cfg.get("dropout", 0.0),
@@ -214,10 +214,8 @@ def train_kalman(
     aux_val = None
     aux_mean = None
     aux_std = None
-    if use_aux or use_parity:
+    if use_aux:
         aux_targets = _make_aux_targets(tensors.features, tensors.seq_lengths, device, window_size=train_cfg.get("aux_window", 60))
-        if use_parity:
-            aux_targets = aux_targets[..., 0:1]
         aux_train = aux_targets[train_idx]
         aux_val = aux_targets[val_idx]
         train_valid = (
@@ -270,7 +268,7 @@ def train_kalman(
             )
             loss = (bce_per_step * valid_mask).sum() / valid_mask.sum().clamp(min=1.0)
 
-            if (use_aux or use_parity) and aux_logits is not None and aux_train is not None:
+            if use_aux and aux_logits is not None and aux_train is not None:
                 aux_target_batch = aux_train[batch_ids]
                 aux_loss_mask = valid_mask.unsqueeze(-1)
                 aux_loss = ((aux_logits - aux_target_batch) ** 2 * aux_loss_mask).sum() / aux_loss_mask.sum().clamp(min=1.0)
@@ -317,7 +315,7 @@ def train_kalman(
                 logits_val, targets_val, reduction="none",
             )
             val_metric = (bce_per_step_val * valid_mask_val).sum() / valid_mask_val.sum().clamp(min=1.0)
-            if (use_aux or use_parity) and aux_logits_val is not None and aux_val is not None:
+            if use_aux and aux_logits_val is not None and aux_val is not None:
                 aux_loss_mask_val = valid_mask_val.unsqueeze(-1)
                 aux_val_loss = ((aux_logits_val - aux_val) ** 2 * aux_loss_mask_val).sum() / aux_loss_mask_val.sum().clamp(min=1.0)
                 val_metric = val_metric + aux_loss_weight * aux_val_loss

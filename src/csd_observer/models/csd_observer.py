@@ -45,12 +45,12 @@ class CSDKalmanObserver(nn.Module):
             self.C_o = nn.Parameter(torch.randn(input_dim, half).mul(0.1))
             self.K_e = nn.Parameter(torch.randn(half, input_dim).mul(0.1))
             self.K_o = nn.Parameter(torch.randn(half, input_dim).mul(0.1))
-            self.alternans_head = nn.Linear(1, 1)
-            h_dim = max(latent_dim // 2, 2)
+            head_input_dim = latent_dim + 1
+            h_dim = max(head_input_dim // 2, 2)
             self.head = nn.Sequential(
-                nn.LayerNorm(latent_dim),
+                nn.LayerNorm(head_input_dim),
                 nn.Dropout(dropout) if dropout > 0 else nn.Identity(),
-                nn.Linear(latent_dim, h_dim),
+                nn.Linear(head_input_dim, h_dim),
                 nn.GELU(),
                 nn.Dropout(dropout) if dropout > 0 else nn.Identity(),
                 nn.Linear(h_dim, 1),
@@ -98,8 +98,6 @@ class CSDKalmanObserver(nn.Module):
                 if isinstance(m, nn.Linear):
                     nn.init.xavier_uniform_(m.weight)
                     nn.init.zeros_(m.bias)
-            nn.init.xavier_uniform_(self.alternans_head.weight)
-            nn.init.zeros_(self.alternans_head.bias)
         elif self.lstm_head:
             for n, p in self.lstm_cell.named_parameters():
                 if "weight" in n:
@@ -140,7 +138,6 @@ class CSDKalmanObserver(nn.Module):
             e_curr = torch.zeros(B, half, device=device)
             o_curr = torch.zeros(B, half, device=device)
             logits = []
-            alt_logits = []
             zs = []
 
             for t in range(T):
@@ -170,17 +167,15 @@ class CSDKalmanObserver(nn.Module):
                     o_curr[idx] = o_new
 
                 z = torch.cat([e_curr, o_curr], dim=-1)
-                logits.append(self.head(z))
-
                 a_t = torch.norm(e_curr - o_curr, dim=-1, keepdim=True)
-                alt_logits.append(self.alternans_head(a_t))
+                z_aug = torch.cat([z, a_t], dim=-1)
+                logits.append(self.head(z_aug))
 
                 zs.append(z)
 
             logits = torch.stack(logits, dim=1).squeeze(-1)
             zs = torch.stack(zs, dim=1)
-            alt = torch.stack(alt_logits, dim=1)
-            return logits, zs, None, None, None, alt
+            return logits, zs, None, None, None, None
 
         A = self.A
         C = self.C

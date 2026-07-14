@@ -544,8 +544,7 @@ def test_acko_forward() -> None:
     assert A is None
     assert K is None
     assert C is None
-    assert alt is not None
-    assert alt.shape == (B, T, 1)
+    assert alt is None
 
 
 def test_acko_forward_masked() -> None:
@@ -560,7 +559,7 @@ def test_acko_forward_masked() -> None:
     logits, zs, _, _, _, alt = model(x, mask)
     assert logits.shape == (B, T)
     assert torch.isfinite(logits).all()
-    assert alt.shape == (B, T, 1)
+    assert alt is None
 
 
 def test_acko_odd_latent_dim_raises() -> None:
