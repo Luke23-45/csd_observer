@@ -15,6 +15,7 @@ Output:
 
 from __future__ import annotations
 
+import copy
 import sys
 import time
 from dataclasses import dataclass
@@ -36,9 +37,12 @@ from csd_observer.data.bifurcation import build_dataset  # noqa: E402
 from csd_observer.training.trainer import (  # noqa: E402
     TensorizedDataset,
     build_probs,
+    build_probs_kalman_lag2,
     tensorize,
     train_kalman,
+    train_kalman_lag2,
 )
+from csd_observer.models.kalman_lag2 import ClassicalKalmanLag2, grid_search_q  # noqa: E402
 from csd_observer.utils.io import OutputWriter  # noqa: E402
 from csd_observer.utils.metrics import (  # noqa: E402
     compute_detection_time,
@@ -49,12 +53,19 @@ from csd_observer.utils.metrics import (  # noqa: E402
     evaluate_raw_var,
     raw_csd_indicator,
     raw_lag2_indicator,
+    raw_lag2_indicator_detrended,
     raw_var_indicator,
     select_threshold,
 )
 
 SYSTEMS = ("fold", "hopf", "logistic")
-METHODS = ("Raw-CSD", "RunningVar", "Lag2-CSD", "Kalman-BCE", "Kalman-LSTM", "Kalman-LSTM-Spec", "Kalman-LSTM-Aux")
+METHODS = (
+    "Raw-CSD", "RunningVar",
+    "Lag2-CSD", "Lag2-CSD-detrended",
+    "Kalman-Lag2", "Kalman-BCE",
+    "Kalman-LSTM", "Kalman-LSTM-Spec", "Kalman-LSTM-Aux",
+    "Kalman-Lag2-Net",
+)
 _REAL_SYSTEMS: Dict[str, Callable] = {}
 
 
@@ -126,6 +137,7 @@ def _run_empirical_experiment(
     config: dict,
     device: torch.device,
     writer: OutputWriter,
+    enabled_methods: Optional[set[str]] = None,
 ) -> SystemResult:
     B_sig = len(arrays_signal["is_positive"])
     features = np.concatenate([arrays_signal["features"], arrays_null["features"]], axis=0)
@@ -177,46 +189,70 @@ def _run_empirical_experiment(
 
     runs: List[RunResult] = []
 
-    csd_scores_test = raw_csd_indicator(arrays_signal["features"], arrays_signal["seq_lengths"], 30)
-    csd_scores_null_test = raw_csd_indicator(arrays_null["features"], arrays_null["seq_lengths"], 30)
-    raw_metrics = evaluate_raw_csd(
-        csd_scores_test,
-        arrays_signal["bifurcation_times"],
-        arrays_signal["is_positive"],
-        arrays_signal["seq_lengths"],
-        csd_scores_null_test,
-        arrays_null["seq_lengths"],
-        threshold=0.6,
-    )
-    runs.append(RunResult(method="Raw-CSD", seed=0, metrics=raw_metrics))
-    writer.write_result_row({"system": system, "seed": 0, "method": "Raw-CSD", **raw_metrics})
+    def _enabled(name: str) -> bool:
+        return enabled_methods is None or name in enabled_methods
 
-    var_scores_test = raw_var_indicator(arrays_signal["features"], arrays_signal["seq_lengths"], 30)
-    var_scores_null_test = raw_var_indicator(arrays_null["features"], arrays_null["seq_lengths"], 30)
-    var_metrics = evaluate_raw_var(
-        var_scores_test,
-        arrays_signal["bifurcation_times"],
-        arrays_signal["is_positive"],
-        arrays_signal["seq_lengths"],
-        var_scores_null_test,
-        arrays_null["seq_lengths"],
-    )
-    runs.append(RunResult(method="RunningVar", seed=0, metrics=var_metrics))
-    writer.write_result_row({"system": system, "seed": 0, "method": "RunningVar", **var_metrics})
+    def _enabled(name: str) -> bool:
+        return enabled_methods is None or name in enabled_methods
 
-    lag2_scores_test = raw_lag2_indicator(arrays_signal["features"], arrays_signal["seq_lengths"], 30)
-    lag2_scores_null_test = raw_lag2_indicator(arrays_null["features"], arrays_null["seq_lengths"], 30)
-    lag2_metrics = evaluate_raw_lag2(
-        lag2_scores_test,
-        arrays_signal["bifurcation_times"],
-        arrays_signal["is_positive"],
-        arrays_signal["seq_lengths"],
-        lag2_scores_null_test,
-        arrays_null["seq_lengths"],
-        threshold=0.5,
-    )
-    runs.append(RunResult(method="Lag2-CSD", seed=0, metrics=lag2_metrics))
-    writer.write_result_row({"system": system, "seed": 0, "method": "Lag2-CSD", **lag2_metrics})
+    if _enabled("Raw-CSD"):
+        csd_scores_test = raw_csd_indicator(arrays_signal["features"], arrays_signal["seq_lengths"], 30)
+        csd_scores_null_test = raw_csd_indicator(arrays_null["features"], arrays_null["seq_lengths"], 30)
+        raw_metrics = evaluate_raw_csd(
+            csd_scores_test,
+            arrays_signal["bifurcation_times"],
+            arrays_signal["is_positive"],
+            arrays_signal["seq_lengths"],
+            csd_scores_null_test,
+            arrays_null["seq_lengths"],
+            threshold=0.6,
+        )
+        runs.append(RunResult(method="Raw-CSD", seed=0, metrics=raw_metrics))
+        writer.write_result_row({"system": system, "seed": 0, "method": "Raw-CSD", **raw_metrics})
+
+    if _enabled("RunningVar"):
+        var_scores_test = raw_var_indicator(arrays_signal["features"], arrays_signal["seq_lengths"], 30)
+        var_scores_null_test = raw_var_indicator(arrays_null["features"], arrays_null["seq_lengths"], 30)
+        var_metrics = evaluate_raw_var(
+            var_scores_test,
+            arrays_signal["bifurcation_times"],
+            arrays_signal["is_positive"],
+            arrays_signal["seq_lengths"],
+            var_scores_null_test,
+            arrays_null["seq_lengths"],
+        )
+        runs.append(RunResult(method="RunningVar", seed=0, metrics=var_metrics))
+        writer.write_result_row({"system": system, "seed": 0, "method": "RunningVar", **var_metrics})
+
+    if _enabled("Lag2-CSD"):
+        lag2_scores_test = raw_lag2_indicator(arrays_signal["features"], arrays_signal["seq_lengths"], 30)
+        lag2_scores_null_test = raw_lag2_indicator(arrays_null["features"], arrays_null["seq_lengths"], 30)
+        lag2_metrics = evaluate_raw_lag2(
+            lag2_scores_test,
+            arrays_signal["bifurcation_times"],
+            arrays_signal["is_positive"],
+            arrays_signal["seq_lengths"],
+            lag2_scores_null_test,
+            arrays_null["seq_lengths"],
+            threshold=0.5,
+        )
+        runs.append(RunResult(method="Lag2-CSD", seed=0, metrics=lag2_metrics))
+        writer.write_result_row({"system": system, "seed": 0, "method": "Lag2-CSD", **lag2_metrics})
+
+    if _enabled("Lag2-CSD-detrended"):
+        lag2_det_scores_test = raw_lag2_indicator_detrended(arrays_signal["features"], arrays_signal["seq_lengths"], 30)
+        lag2_det_scores_null_test = raw_lag2_indicator_detrended(arrays_null["features"], arrays_null["seq_lengths"], 30)
+        lag2_det_metrics = evaluate_raw_lag2(
+            lag2_det_scores_test,
+            arrays_signal["bifurcation_times"],
+            arrays_signal["is_positive"],
+            arrays_signal["seq_lengths"],
+            lag2_det_scores_null_test,
+            arrays_null["seq_lengths"],
+            threshold=0.5,
+        )
+        runs.append(RunResult(method="Lag2-CSD-detrended", seed=0, metrics=lag2_det_metrics))
+        writer.write_result_row({"system": system, "seed": 0, "method": "Lag2-CSD-detrended", **lag2_det_metrics})
 
     methods_list = [
         ("Kalman-BCE", "bce"),
@@ -225,6 +261,8 @@ def _run_empirical_experiment(
     ]
     if system == "chick_heart":
         methods_list.append(("Kalman-LSTM-Aux", "lstm_aux"))
+
+    methods_list = [(n, lt) for n, lt in methods_list if _enabled(n)]
 
     for method_name, loss_type in methods_list:
         for seed in seeds:
@@ -306,6 +344,165 @@ def _run_empirical_experiment(
             runs.append(RunResult(method=method_name, seed=seed, metrics=metrics))
             writer.write_result_row({"system": system, "seed": seed, "method": method_name, **metrics})
 
+    # --- Kalman-Lag2 (classical, non-learned) ---
+    lag2_det_all = np.concatenate([
+        raw_lag2_indicator_detrended(arrays_signal["features"], arrays_signal["seq_lengths"], 30),
+        raw_lag2_indicator_detrended(arrays_null["features"], arrays_null["seq_lengths"], 30),
+    ], axis=0)
+    if _enabled("Kalman-Lag2"):
+        kalman_lag2_cv = {"detection_time": [], "ew_auc": [], "fpr": []}
+        for fold_idx, split in enumerate(cv_folds):
+            train_idx = split["train"]
+            val_idx = split["val"]
+            test_idx = split["test"]
+            test_mask_sig = test_idx < B_sig
+            test_idx_s = test_idx[test_mask_sig]
+            test_idx_n = test_idx[~test_mask_sig] - B_sig
+
+            lag2_val = lag2_det_all[val_idx]
+            lag2_test_s = lag2_det_all[test_idx_s]
+            lag2_test_n = lag2_det_all[test_idx_n]
+
+            best_q = grid_search_q(
+                lag2_val,
+                bifurcation_times[val_idx],
+                is_positive[val_idx],
+                seq_lengths[val_idx],
+            )
+
+            kalman = ClassicalKalmanLag2(q=best_q, r=1.0).to(device)
+            kalman.eval()
+            with torch.no_grad():
+                mu_val = kalman(torch.from_numpy(lag2_val.astype(np.float32)).to(device))["mu_hat"].cpu().numpy()
+                mu_test_s = kalman(torch.from_numpy(lag2_test_s.astype(np.float32)).to(device))["mu_hat"].cpu().numpy()
+                if len(test_idx_n) > 0:
+                    mu_test_n = kalman(torch.from_numpy(lag2_test_n.astype(np.float32)).to(device))["mu_hat"].cpu().numpy()
+
+            sig_mask_val = is_positive[val_idx] & (bifurcation_times[val_idx] > 0)
+            null_mask_val = ~is_positive[val_idx]
+            val_scores = []
+            val_labels = []
+            for i in np.where(sig_mask_val)[0]:
+                tau = bifurcation_times[val_idx][i]
+                t_start = max(0, int(tau - 50.0))
+                t_end = max(0, int(tau - 5.0))
+                if t_end > t_start:
+                    val_scores.append(float(np.max(mu_val[i, t_start:t_end])))
+                    val_labels.append(1)
+            for i in np.where(null_mask_val)[0]:
+                T_len = int(seq_lengths[val_idx][i])
+                t_start = max(0, int(T_len - 50.0))
+                t_end = max(0, int(T_len - 5.0))
+                if t_end > t_start:
+                    val_scores.append(float(np.max(mu_val[i, t_start:t_end])))
+                    val_labels.append(0)
+
+            if len(set(val_labels)) >= 2:
+                from sklearn.metrics import roc_curve as _roc
+                fpr_v, tpr_v, thr_v = _roc(val_labels, val_scores)
+                youden = tpr_v - fpr_v
+                best_thr = float(thr_v[int(np.argmax(youden))])
+            else:
+                best_thr = 0.5
+
+            dt = compute_detection_time(mu_test_s, arrays_signal["bifurcation_times"][test_idx_s], arrays_signal["is_positive"][test_idx_s], arrays_signal["seq_lengths"][test_idx_s], best_thr)
+            ewa = compute_early_warning_auc(mu_test_s, arrays_signal["bifurcation_times"][test_idx_s], arrays_signal["is_positive"][test_idx_s], arrays_signal["seq_lengths"][test_idx_s], mu_test_n if len(test_idx_n) > 0 else np.zeros((0, mu_test_s.shape[1])), arrays_null["seq_lengths"][test_idx_n] if len(test_idx_n) > 0 else np.zeros(0))
+            null_m = compute_null_metrics(mu_test_n if len(test_idx_n) > 0 else np.zeros((0, mu_test_s.shape[1])), best_thr, arrays_null["seq_lengths"][test_idx_n] if len(test_idx_n) > 0 else np.zeros(0))
+            kalman_lag2_cv["detection_time"].append(dt)
+            kalman_lag2_cv["ew_auc"].append(ewa)
+            kalman_lag2_cv["fpr"].append(null_m.get("fpr", float("nan")))
+
+        kl2_metrics = {
+            "detection_time": float(np.nanmean(kalman_lag2_cv["detection_time"])),
+            "ew_auc": float(np.nanmean(kalman_lag2_cv["ew_auc"])),
+            "fpr": float(np.nanmean(kalman_lag2_cv["fpr"])),
+            "detection_time_std": float(np.nanstd(kalman_lag2_cv["detection_time"])),
+            "ew_auc_std": float(np.nanstd(kalman_lag2_cv["ew_auc"])),
+            "fpr_std": float(np.nanstd(kalman_lag2_cv["fpr"])),
+        }
+        runs.append(RunResult(method="Kalman-Lag2", seed=0, metrics=kl2_metrics))
+        writer.write_result_row({"system": system, "seed": 0, "method": "Kalman-Lag2", **kl2_metrics})
+
+    # --- Kalman-Lag2-Net (learned MLP head on top of Kalman) ---
+    if _enabled("Kalman-Lag2-Net"):
+        for seed in seeds:
+            cv_metrics = {"detection_time": [], "ew_auc": [], "fpr": []}
+            for fold_idx, split in enumerate(cv_folds):
+                train_idx = split["train"]
+                val_idx = split["val"]
+                test_idx = split["test"]
+                test_mask_sig = test_idx < B_sig
+                test_idx_s = test_idx[test_mask_sig]
+                test_idx_n = test_idx[~test_mask_sig] - B_sig
+
+                lag2_train = lag2_det_all[train_idx]
+                lag2_val = lag2_det_all[val_idx]
+                lag2_test_s = lag2_det_all[test_idx_s]
+                lag2_test_n = lag2_det_all[test_idx_n]
+
+                best_q = grid_search_q(
+                    lag2_val,
+                    bifurcation_times[val_idx],
+                    is_positive[val_idx],
+                    seq_lengths[val_idx],
+                )
+
+                cfg_kl2 = copy.deepcopy(config)
+                cfg_kl2.setdefault("training", {})["seed_override"] = seed
+                model_kl2 = train_kalman_lag2(
+                    lag2_det_all, train_idx, val_idx,
+                    bifurcation_times, is_positive, seq_lengths,
+                    q=best_q, config=cfg_kl2, device=device,
+                )
+
+                if len(test_idx_s) > 0:
+                    probs_test = build_probs_kalman_lag2(model_kl2, lag2_det_all, test_idx_s)
+                else:
+                    probs_test = np.zeros((0, lag2_det_all.shape[1]))
+                if len(test_idx_n) > 0:
+                    probs_null = build_probs_kalman_lag2(model_kl2, lag2_det_all, test_idx_n)
+                else:
+                    probs_null = np.zeros((0, lag2_det_all.shape[1]))
+
+                probs_val = build_probs_kalman_lag2(model_kl2, lag2_det_all, val_idx)
+                val_null_mask = val_idx >= B_sig
+                null_val_probs = probs_val[val_null_mask] if val_null_mask.any() else None
+                null_val_lens = seq_lengths[val_idx[val_null_mask]] if val_null_mask.any() else None
+
+                thresh = select_threshold(
+                    probs_val, bifurcation_times[val_idx],
+                    is_positive[val_idx], seq_lengths[val_idx],
+                    null_probs=null_val_probs, null_seq_lengths=null_val_lens,
+                )
+
+                dt = compute_detection_time(
+                    probs_test, arrays_signal["bifurcation_times"][test_idx_s],
+                    arrays_signal["is_positive"][test_idx_s],
+                    arrays_signal["seq_lengths"][test_idx_s], thresh,
+                )
+                ewa = compute_early_warning_auc(
+                    probs_test, arrays_signal["bifurcation_times"][test_idx_s],
+                    arrays_signal["is_positive"][test_idx_s],
+                    arrays_signal["seq_lengths"][test_idx_s],
+                    probs_null, arrays_null["seq_lengths"][test_idx_n],
+                )
+                null_m = compute_null_metrics(probs_null, thresh, arrays_null["seq_lengths"][test_idx_n])
+
+                cv_metrics["detection_time"].append(dt)
+                cv_metrics["ew_auc"].append(ewa)
+                cv_metrics["fpr"].append(null_m.get("fpr", float("nan")))
+
+            metrics = {
+                "detection_time": float(np.nanmean(cv_metrics["detection_time"])),
+                "ew_auc": float(np.nanmean(cv_metrics["ew_auc"])),
+                "fpr": float(np.nanmean(cv_metrics["fpr"])),
+                "detection_time_std": float(np.nanstd(cv_metrics["detection_time"])),
+                "ew_auc_std": float(np.nanstd(cv_metrics["ew_auc"])),
+                "fpr_std": float(np.nanstd(cv_metrics["fpr"])),
+            }
+            runs.append(RunResult(method="Kalman-Lag2-Net", seed=seed, metrics=metrics))
+            writer.write_result_row({"system": system, "seed": seed, "method": "Kalman-Lag2-Net", **metrics})
+
     return SystemResult(system=system, runs=runs)
 
 
@@ -319,6 +516,7 @@ def _run_synthetic_experiment(
     config: dict,
     device: torch.device,
     writer: OutputWriter,
+    enabled_methods: Optional[set[str]] = None,
 ) -> SystemResult:
     data_cfg = config.get("data", {})
     train_idx_s = arrays_signal["split_indices"]["train"]
@@ -332,52 +530,59 @@ def _run_synthetic_experiment(
 
     runs: List[RunResult] = []
 
-    csd_scores_test = raw_csd_indicator(arrays_signal["features"][test_idx_s], arrays_signal["seq_lengths"][test_idx_s], 30)
-    csd_scores_null_test = raw_csd_indicator(arrays_null["features"][test_idx_n], arrays_null["seq_lengths"][test_idx_n], 30)
-    raw_metrics = evaluate_raw_csd(
-        csd_scores_test,
-        arrays_signal["bifurcation_times"][test_idx_s],
-        arrays_signal["is_positive"][test_idx_s],
-        arrays_signal["seq_lengths"][test_idx_s],
-        csd_scores_null_test,
-        arrays_null["seq_lengths"][test_idx_n],
-        threshold=0.6,
-    )
-    runs.append(RunResult(method="Raw-CSD", seed=0, metrics=raw_metrics))
-    writer.write_result_row({"system": system, "seed": 0, "method": "Raw-CSD", **raw_metrics})
+    def _enabled(name: str) -> bool:
+        return enabled_methods is None or name in enabled_methods
 
-    var_scores_test = raw_var_indicator(arrays_signal["features"][test_idx_s], arrays_signal["seq_lengths"][test_idx_s], 30)
-    var_scores_null_test = raw_var_indicator(arrays_null["features"][test_idx_n], arrays_null["seq_lengths"][test_idx_n], 30)
-    var_metrics = evaluate_raw_var(
-        var_scores_test,
-        arrays_signal["bifurcation_times"][test_idx_s],
-        arrays_signal["is_positive"][test_idx_s],
-        arrays_signal["seq_lengths"][test_idx_s],
-        var_scores_null_test,
-        arrays_null["seq_lengths"][test_idx_n],
-    )
-    runs.append(RunResult(method="RunningVar", seed=0, metrics=var_metrics))
-    writer.write_result_row({"system": system, "seed": 0, "method": "RunningVar", **var_metrics})
+    if _enabled("Raw-CSD"):
+        csd_scores_test = raw_csd_indicator(arrays_signal["features"][test_idx_s], arrays_signal["seq_lengths"][test_idx_s], 30)
+        csd_scores_null_test = raw_csd_indicator(arrays_null["features"][test_idx_n], arrays_null["seq_lengths"][test_idx_n], 30)
+        raw_metrics = evaluate_raw_csd(
+            csd_scores_test,
+            arrays_signal["bifurcation_times"][test_idx_s],
+            arrays_signal["is_positive"][test_idx_s],
+            arrays_signal["seq_lengths"][test_idx_s],
+            csd_scores_null_test,
+            arrays_null["seq_lengths"][test_idx_n],
+            threshold=0.6,
+        )
+        runs.append(RunResult(method="Raw-CSD", seed=0, metrics=raw_metrics))
+        writer.write_result_row({"system": system, "seed": 0, "method": "Raw-CSD", **raw_metrics})
 
-    lag2_scores_test = raw_lag2_indicator(arrays_signal["features"][test_idx_s], arrays_signal["seq_lengths"][test_idx_s], 30)
-    lag2_scores_null_test = raw_lag2_indicator(arrays_null["features"][test_idx_n], arrays_null["seq_lengths"][test_idx_n], 30)
-    lag2_metrics = evaluate_raw_lag2(
-        lag2_scores_test,
-        arrays_signal["bifurcation_times"][test_idx_s],
-        arrays_signal["is_positive"][test_idx_s],
-        arrays_signal["seq_lengths"][test_idx_s],
-        lag2_scores_null_test,
-        arrays_null["seq_lengths"][test_idx_n],
-        threshold=0.5,
-    )
-    runs.append(RunResult(method="Lag2-CSD", seed=0, metrics=lag2_metrics))
-    writer.write_result_row({"system": system, "seed": 0, "method": "Lag2-CSD", **lag2_metrics})
+    if _enabled("RunningVar"):
+        var_scores_test = raw_var_indicator(arrays_signal["features"][test_idx_s], arrays_signal["seq_lengths"][test_idx_s], 30)
+        var_scores_null_test = raw_var_indicator(arrays_null["features"][test_idx_n], arrays_null["seq_lengths"][test_idx_n], 30)
+        var_metrics = evaluate_raw_var(
+            var_scores_test,
+            arrays_signal["bifurcation_times"][test_idx_s],
+            arrays_signal["is_positive"][test_idx_s],
+            arrays_signal["seq_lengths"][test_idx_s],
+            var_scores_null_test,
+            arrays_null["seq_lengths"][test_idx_n],
+        )
+        runs.append(RunResult(method="RunningVar", seed=0, metrics=var_metrics))
+        writer.write_result_row({"system": system, "seed": 0, "method": "RunningVar", **var_metrics})
+
+    if _enabled("Lag2-CSD"):
+        lag2_scores_test = raw_lag2_indicator(arrays_signal["features"][test_idx_s], arrays_signal["seq_lengths"][test_idx_s], 30)
+        lag2_scores_null_test = raw_lag2_indicator(arrays_null["features"][test_idx_n], arrays_null["seq_lengths"][test_idx_n], 30)
+        lag2_metrics = evaluate_raw_lag2(
+            lag2_scores_test,
+            arrays_signal["bifurcation_times"][test_idx_s],
+            arrays_signal["is_positive"][test_idx_s],
+            arrays_signal["seq_lengths"][test_idx_s],
+            lag2_scores_null_test,
+            arrays_null["seq_lengths"][test_idx_n],
+            threshold=0.5,
+        )
+        runs.append(RunResult(method="Lag2-CSD", seed=0, metrics=lag2_metrics))
+        writer.write_result_row({"system": system, "seed": 0, "method": "Lag2-CSD", **lag2_metrics})
 
     methods_list = [
         ("Kalman-BCE", "bce"),
         ("Kalman-LSTM", "lstm"),
         ("Kalman-LSTM-Spec", "lstm_spec"),
     ]
+    methods_list = [(n, lt) for n, lt in methods_list if _enabled(n)]
     total = len(seeds) * len(methods_list)
     pbar = tqdm(total=total, desc=f"{system}", unit="run", leave=False)
     for seed in seeds:
@@ -499,12 +704,27 @@ def _summarize_system(agg: Dict[str, Dict[str, float]], system: str) -> None:
         print(f"{method:<20s} {dt_s:>10s} {ewa_s:>10s} {fpr_s:>10s}")
 
 
-def _parse_args() -> Tuple[List[str], Optional[int]]:
+def _parse_args() -> Tuple[List[str], Optional[int], Optional[set[str]]]:
     n_seeds_override: Optional[int] = None
+    methods_override: Optional[set[str]] = None
     run_names: List[str] = []
     for arg in sys.argv[1:]:
         if arg.startswith("n_seeds="):
             n_seeds_override = int(arg.split("=", 1)[1])
+        elif arg.startswith("methods="):
+            raw = arg.split("=", 1)[1]
+            if raw.strip().lower() == "all":
+                methods_override = None
+            else:
+                chosen = {m.strip() for m in raw.split(",") if m.strip()}
+                valid = set(METHODS)
+                invalid = chosen - valid
+                if invalid:
+                    raise ValueError(
+                        f"Unknown method(s): {sorted(invalid)}. "
+                        f"Valid methods: {', '.join(METHODS)}"
+                    )
+                methods_override = chosen
         elif arg in ("-h", "--help"):
             print(__doc__)
             sys.exit(0)
@@ -512,16 +732,18 @@ def _parse_args() -> Tuple[List[str], Optional[int]]:
             run_names.append(arg)
     if not run_names:
         run_names = ["default", "high_noise", "low_data"]
-    return run_names, n_seeds_override
+    return run_names, n_seeds_override, methods_override
 
 
-def _run_single(run_name: str, n_seeds_override: Optional[int] = None) -> None:
+def _run_single(run_name: str, n_seeds_override: Optional[int] = None, enabled_methods: Optional[set[str]] = None) -> None:
     print(f"Loading config: {run_name}")
     config = load_config(run_name)
     data_cfg = config.get("data", {})
     if n_seeds_override is not None:
         data_cfg["n_seeds"] = n_seeds_override
         print(f"  [override] n_seeds={n_seeds_override}")
+    if enabled_methods is not None:
+        print(f"  [override] methods={','.join(sorted(enabled_methods))}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
@@ -561,6 +783,7 @@ def _run_single(run_name: str, n_seeds_override: Optional[int] = None) -> None:
             sys_res = _run_empirical_experiment(
                 system, arrays_signal, arrays_null,
                 config=config, device=device, writer=writer,
+                enabled_methods=enabled_methods,
             )
         else:
             print(f"--- Generating {system} data (Synthetic Pipeline) ---")
@@ -584,6 +807,7 @@ def _run_single(run_name: str, n_seeds_override: Optional[int] = None) -> None:
                 system, tensors_signal, tensors_null,
                 arrays_signal, arrays_null,
                 config=config, device=device, writer=writer,
+                enabled_methods=enabled_methods,
             )
 
         agg = sys_res.aggregate()
@@ -612,7 +836,7 @@ def _run_single(run_name: str, n_seeds_override: Optional[int] = None) -> None:
 
 
 def main() -> None:
-    run_names, n_seeds_override = _parse_args()
+    run_names, n_seeds_override, methods_override = _parse_args()
     total_started = time.time()
     for i, run_name in enumerate(run_names, 1):
         tag = f"[{i}/{len(run_names)}] " if len(run_names) > 1 else ""
@@ -620,7 +844,7 @@ def main() -> None:
         print(f"{tag}RUN: {run_name}")
         print(f"{tag}{'='*70}")
         try:
-            _run_single(run_name, n_seeds_override)
+            _run_single(run_name, n_seeds_override, methods_override)
         except Exception as e:
             print(f"\nERROR: {run_name} failed: {e}")
             continue

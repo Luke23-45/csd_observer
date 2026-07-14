@@ -12,6 +12,13 @@ def _sanitize_scores(scores: np.ndarray, *, fill: float = 0.0) -> np.ndarray:
     return np.nan_to_num(scores, nan=fill, posinf=1.0, neginf=0.0)
 
 
+def _linear_detrend(seg: np.ndarray) -> np.ndarray:
+    x = np.arange(len(seg), dtype=np.float64)
+    A = np.vstack([x, np.ones_like(x)]).T
+    coeffs, _, _, _ = np.linalg.lstsq(A, seg.astype(np.float64), rcond=None)
+    return (seg.astype(np.float64) - A @ coeffs).astype(seg.dtype)
+
+
 def raw_csd_indicator(features: np.ndarray, seq_lengths: np.ndarray, window_size: int = 30) -> np.ndarray:
     B, T, C = features.shape
     W = min(window_size, T)
@@ -30,7 +37,12 @@ def raw_csd_indicator(features: np.ndarray, seq_lengths: np.ndarray, window_size
     return scores
 
 
-def raw_lag2_indicator(features: np.ndarray, seq_lengths: np.ndarray, window_size: int = 30) -> np.ndarray:
+def raw_lag2_indicator(
+    features: np.ndarray,
+    seq_lengths: np.ndarray,
+    window_size: int = 30,
+    detrend: bool = False,
+) -> np.ndarray:
     B, T, C = features.shape
     W = min(window_size, T)
     scores = np.zeros((B, T), dtype=np.float32)
@@ -42,6 +54,8 @@ def raw_lag2_indicator(features: np.ndarray, seq_lengths: np.ndarray, window_siz
                 seg = seq[t - W : t]
                 if len(seg) < 4:
                     continue
+                if detrend:
+                    seg = _linear_detrend(seg)
                 seg_a = seg[:-2] - seg[:-2].mean()
                 seg_b = seg[2:] - seg[2:].mean()
                 num = np.sum(seg_a * seg_b)
@@ -49,6 +63,14 @@ def raw_lag2_indicator(features: np.ndarray, seq_lengths: np.ndarray, window_siz
                 rho2 = num / denom
                 scores[b, t] = max(scores[b, t], rho2)
     return scores
+
+
+def raw_lag2_indicator_detrended(
+    features: np.ndarray,
+    seq_lengths: np.ndarray,
+    window_size: int = 30,
+) -> np.ndarray:
+    return raw_lag2_indicator(features, seq_lengths, window_size, detrend=True)
 
 
 def compute_bootstrap_ci(scores: np.ndarray, labels: np.ndarray, n_bootstrap: int = 1000) -> Dict[str, float]:

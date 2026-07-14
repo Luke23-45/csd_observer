@@ -334,6 +334,128 @@ def train_kalman(
     return model
 
 
+def train_kalman_lag2(
+    lag2_scores: np.ndarray,
+    train_idx: np.ndarray,
+    val_idx: np.ndarray,
+    bif_times: np.ndarray,
+    is_positive: np.ndarray,
+    seq_lengths: np.ndarray,
+    *,
+    q: float,
+    config: dict,
+    device: torch.device,
+) -> KalmanLag2Net:
+    from csd_observer.models.kalman_lag2 import KalmanLag2Net
+
+    train_cfg = config.get("training", {})
+    _seed_all(train_cfg.get("seed_override", 42))
+
+    lr = train_cfg.get("lr", 5e-4)
+    weight_decay = train_cfg.get("weight_decay", 1e-3)
+    epochs = train_cfg.get("epochs", 50)
+    batch_size = train_cfg.get("batch_size", 16)
+    patience = train_cfg.get("patience", 15)
+    scheduler_eta_min = train_cfg.get("scheduler_eta_min", 1e-6)
+    target_sigma = train_cfg.get("target_sigma", 80.0)
+    max_length = lag2_scores.shape[1]
+
+    lag2_train = lag2_scores[train_idx]
+    lag2_val = lag2_scores[val_idx]
+    bif_train = bif_times[train_idx]
+    bif_val = bif_times[val_idx]
+    lens_train = seq_lengths[train_idx]
+    lens_val = seq_lengths[val_idx]
+
+    model = KalmanLag2Net(q=q, r=1.0).to(device)
+
+    optimizer = torch.optim.AdamW(model.head.parameters(), lr=lr, weight_decay=weight_decay)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=epochs, eta_min=scheduler_eta_min,
+    )
+
+    from csd_observer.utils.metrics import compute_early_warning_auc as _ewa
+
+    best_state = None
+    best_val_metric = -float("inf")
+    stale_epochs = 0
+
+    for _ in range(epochs):
+        model.train()
+        order = np.random.permutation(len(train_idx))
+        for start in range(0, len(train_idx), batch_size):
+            batch_ids = order[start: start + batch_size]
+            x_batch = torch.from_numpy(lag2_train[batch_ids].astype(np.float32)).to(device)
+            b_batch = torch.from_numpy(bif_train[batch_ids].astype(np.float32)).to(device)
+            l_batch = torch.from_numpy(lens_train[batch_ids].astype(np.int64)).to(device)
+
+            logits = model(x_batch)
+
+            targets = _make_targets(
+                b_batch, l_batch, device,
+                max_length=max_length, sigma=target_sigma,
+            )
+            valid_mask = (
+                torch.arange(max_length, device=device).unsqueeze(0)
+                < l_batch.unsqueeze(1)
+            ).float()
+
+            bce = torch.nn.functional.binary_cross_entropy_with_logits(
+                logits, targets, reduction="none",
+            )
+            loss = (bce * valid_mask).sum() / valid_mask.sum().clamp(min=1.0)
+
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.head.parameters(), 1.0)
+            optimizer.step()
+
+        scheduler.step()
+
+        model.eval()
+        with torch.no_grad():
+            x_val_t = torch.from_numpy(lag2_val.astype(np.float32)).to(device)
+            logits_val = model(x_val_t)
+            probs_val = torch.sigmoid(logits_val).cpu().numpy()
+
+        sig_mask = is_positive[val_idx] & (bif_val > 0)
+        null_mask = ~is_positive[val_idx]
+        if sig_mask.any() and null_mask.any():
+            val_metric = _ewa(
+                probs_val[sig_mask], bif_val[sig_mask],
+                is_positive[val_idx][sig_mask], lens_val[sig_mask],
+                probs_val[null_mask], lens_val[null_mask],
+            )
+        else:
+            val_metric = float("nan")
+
+        if np.isfinite(val_metric) and val_metric > best_val_metric + 1e-4:
+            best_val_metric = val_metric
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+            stale_epochs = 0
+        else:
+            stale_epochs += 1
+            if stale_epochs >= patience:
+                break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    return model
+
+
+def build_probs_kalman_lag2(
+    model: KalmanLag2Net,
+    lag2_scores: np.ndarray,
+    indices: np.ndarray,
+) -> np.ndarray:
+    model.eval()
+    x = torch.from_numpy(lag2_scores[indices].astype(np.float32)).to(next(model.parameters()).device)
+    with torch.no_grad():
+        logits = model(x)
+        probs = np.nan_to_num(torch.sigmoid(logits).cpu().numpy(), nan=0.5, posinf=1.0, neginf=0.0)
+    return probs
+
+
 def build_probs(
     model: CSDKalmanObserver,
     tensors: TensorizedDataset,

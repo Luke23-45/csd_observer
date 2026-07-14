@@ -403,3 +403,119 @@ def test_train_kalman_aux() -> None:
     assert model.aux_head
     probs = build_probs(model, tensors, data["split_indices"]["test"])
     assert probs.shape[0] == len(data["split_indices"]["test"])
+
+
+def test_linear_detrend_zero_trend() -> None:
+    from csd_observer.utils.metrics import _linear_detrend
+    seg = np.ones(30, dtype=np.float32) * 5.0
+    detrended = _linear_detrend(seg)
+    assert np.allclose(detrended, np.zeros(30), atol=1e-5)
+
+
+def test_linear_detrend_line() -> None:
+    from csd_observer.utils.metrics import _linear_detrend
+    x = np.arange(30, dtype=np.float32)
+    seg = 2.0 * x + 1.0
+    detrended = _linear_detrend(seg)
+    assert np.allclose(detrended, np.zeros(30), atol=1e-4)
+
+
+def test_lag2_detrended_equals_original_on_flat() -> None:
+    from csd_observer.utils.metrics import _linear_detrend
+    from csd_observer.utils.metrics import raw_lag2_indicator, raw_lag2_indicator_detrended
+    rng = np.random.default_rng(42)
+    features = rng.normal(0, 1, (4, 50, 1)).astype(np.float32)
+    seq_lengths = np.full(4, 50, dtype=np.int64)
+    orig = raw_lag2_indicator(features, seq_lengths, window_size=10, detrend=False)
+    det = raw_lag2_indicator_detrended(features, seq_lengths, window_size=10)
+    assert not np.allclose(orig, det, atol=1e-5)
+    const_features = np.full((4, 50, 1), 5.0, dtype=np.float32)
+    orig_c = raw_lag2_indicator(const_features, seq_lengths, window_size=10, detrend=False)
+    det_c = raw_lag2_indicator_detrended(const_features, seq_lengths, window_size=10)
+    assert np.allclose(orig_c, det_c, atol=1e-6)
+
+
+def test_classical_kalman_shapes() -> None:
+    from csd_observer.models.kalman_lag2 import ClassicalKalmanLag2
+    B, T = 4, 100
+    y = torch.randn(B, T)
+    model = ClassicalKalmanLag2(q=1e-3, r=1.0)
+    out = model(y)
+    assert out["mu_hat"].shape == (B, T)
+    assert out["delta_hat"].shape == (B, T)
+    assert out["innovation"].shape == (B, T)
+    assert out["y"].shape == (B, T)
+
+
+def test_classical_kalman_no_params() -> None:
+    from csd_observer.models.kalman_lag2 import ClassicalKalmanLag2
+    model = ClassicalKalmanLag2(q=1e-3, r=1.0)
+    n_params = sum(p.numel() for p in model.parameters())
+    assert n_params == 0, f"Expected 0 trainable params, got {n_params}"
+
+
+def test_classical_kalman_q_low_smooths() -> None:
+    from csd_observer.models.kalman_lag2 import ClassicalKalmanLag2
+    B, T = 1, 200
+    rng = np.random.default_rng(42)
+    y = np.zeros((B, T), dtype=np.float32)
+    y[0, 100:] = 0.8
+    y[0] += rng.normal(0, 0.05, T).astype(np.float32)
+    y_t = torch.from_numpy(y)
+    model = ClassicalKalmanLag2(q=1e-6, r=1.0)
+    out = model(y_t)
+    mu = out["mu_hat"].numpy()
+    var_raw = np.var(y[0, -50:])
+    var_mu = np.var(mu[0, -50:])
+    assert var_mu < var_raw, f"Smoothed variance {var_mu} >= raw {var_raw}"
+
+
+def test_classical_kalman_q_high_follows() -> None:
+    from csd_observer.models.kalman_lag2 import ClassicalKalmanLag2
+    B, T = 1, 100
+    y = torch.zeros(B, T)
+    y[0, 50:] = 1.0
+    model = ClassicalKalmanLag2(q=1e-1, r=1.0)
+    out = model(y)
+    mu = out["mu_hat"].numpy()
+    assert mu[0, -1] > 0.8, f"mu[-1] = {mu[0, -1]}"
+
+
+def test_grid_search_q_returns_valid() -> None:
+    from csd_observer.models.kalman_lag2 import grid_search_q
+    B, T = 10, 100
+    rng = np.random.default_rng(42)
+    _ = rng.normal(0, 0.1, (B, T)).astype(np.float32)
+    y_val = rng.normal(0, 0.1, (B, T)).astype(np.float32)
+    bifs = np.full(B, 80.0, dtype=np.float32)
+    is_pos = np.concatenate([np.ones(B // 2, dtype=bool), np.zeros(B - B // 2, dtype=bool)])
+    lens = np.full(B, T, dtype=np.int64)
+    best_q = grid_search_q(y_val, bifs, is_pos, lens)
+    assert best_q in [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1]
+
+
+def test_kalman_lag2_mlp_count() -> None:
+    from csd_observer.models.kalman_lag2 import KalmanLag2MLPHead
+    head = KalmanLag2MLPHead(input_dim=4, hidden_dim=4)
+    n_params = sum(p.numel() for p in head.parameters())
+    assert n_params == 25, f"Expected 25 params, got {n_params}"
+
+
+def test_kalman_lag2_net_forward() -> None:
+    from csd_observer.models.kalman_lag2 import KalmanLag2Net
+    B, T = 4, 100
+    y = torch.randn(B, T)
+    model = KalmanLag2Net(q=1e-3, r=1.0)
+    logits = model(y)
+    assert logits.shape == (B, T)
+
+
+def test_kalman_lag2_net_forward_numpy() -> None:
+    from csd_observer.models.kalman_lag2 import KalmanLag2Net
+    B, T = 4, 100
+    y = np.random.randn(B, T).astype(np.float32)
+    model = KalmanLag2Net(q=1e-3, r=1.0)
+    model.eval()
+    with torch.no_grad():
+        logits = model(torch.from_numpy(y))
+    assert logits.shape == (B, T)

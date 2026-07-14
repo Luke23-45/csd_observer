@@ -25,3 +25,16 @@ python studies/runner/benchmark.py chick_heart
 # Or clear cached data and re-run:
 rm -rf data/chick_heart/
 python studies/runner/benchmark.py chick_heart n_seeds=1
+
+
+# Run only new methods (fast iteration):
+python studies/runner/benchmark.py chick_heart methods=Kalman-Lag2,Kalman-Lag2-Net,Lag2-CSD-detrended
+
+# Run a single baseline:
+python studies/runner/benchmark.py chick_heart methods=Lag2-CSD-detrended
+
+# Run all learned methods, skip non-learned:
+python studies/runner/benchmark.py chick_heart methods=Kalman-BCE,Kalman-LSTM,Kalman-LSTM-Spec,Kalman-LSTM-Aux,Kalman-Lag2-Net
+
+# Run everything (current behavior — same as omitting methods=):
+python studies/runner/benchmark.py chick_heart methods=all
