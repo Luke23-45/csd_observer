@@ -8,6 +8,10 @@ from sklearn.metrics import roc_auc_score, roc_curve
 W_LABEL = 60
 
 
+def _sanitize_scores(scores: np.ndarray, *, fill: float = 0.0) -> np.ndarray:
+    return np.nan_to_num(scores, nan=fill, posinf=1.0, neginf=0.0)
+
+
 def raw_csd_indicator(features: np.ndarray, seq_lengths: np.ndarray, window_size: int = 30) -> np.ndarray:
     B, T, C = features.shape
     W = min(window_size, T)
@@ -48,6 +52,7 @@ def raw_lag2_indicator(features: np.ndarray, seq_lengths: np.ndarray, window_siz
 
 
 def compute_bootstrap_ci(scores: np.ndarray, labels: np.ndarray, n_bootstrap: int = 1000) -> Dict[str, float]:
+    scores = _sanitize_scores(scores)
     if len(set(labels)) < 2:
         return {"mean": float("nan"), "std": float("nan"), "ci95_low": float("nan"), "ci95_high": float("nan")}
     rng = np.random.default_rng(42)
@@ -83,6 +88,8 @@ def evaluate_raw_var(
     early_start_delta: float = 50.0,
     early_end_delta: float = 5.0,
 ) -> Dict[str, float]:
+    var_scores_signal = _sanitize_scores(var_scores_signal)
+    var_scores_null = _sanitize_scores(var_scores_null)
     detection_times: List[float] = []
     early_probs: List[float] = []
     early_labels: List[int] = []
@@ -123,6 +130,8 @@ def evaluate_raw_csd(
     early_start_delta: float = 50.0,
     early_end_delta: float = 5.0,
 ) -> Dict[str, float]:
+    csd_scores_signal = _sanitize_scores(csd_scores_signal)
+    csd_scores_null = _sanitize_scores(csd_scores_null)
     detection_times: List[float] = []
     early_probs: List[float] = []
     early_labels: List[int] = []
@@ -165,6 +174,8 @@ def evaluate_raw_lag2(
     early_start_delta: float = 50.0,
     early_end_delta: float = 5.0,
 ) -> Dict[str, float]:
+    lag2_scores_signal = _sanitize_scores(lag2_scores_signal)
+    lag2_scores_null = _sanitize_scores(lag2_scores_null)
     detection_times: List[float] = []
     early_probs: List[float] = []
     early_labels: List[int] = []
@@ -207,6 +218,7 @@ def select_threshold(
     null_probs: Optional[np.ndarray] = None,
     null_seq_lengths: Optional[np.ndarray] = None,
 ) -> float:
+    val_probs = _sanitize_scores(val_probs, fill=0.5)
     positives = val_is_positive & (val_bif_times > 0)
     if not positives.any():
         return 0.5
@@ -224,6 +236,7 @@ def select_threshold(
             scores.append(val_probs[i, t])
             labels.append(0)
     if null_probs is not None and null_seq_lengths is not None:
+        null_probs = _sanitize_scores(null_probs, fill=0.5)
         for i in range(len(null_probs)):
             T = int(null_seq_lengths[i])
             if T > 0:
@@ -253,6 +266,7 @@ def compute_detection_time(
     seq_lengths: np.ndarray,
     threshold: float,
 ) -> float:
+    probs = _sanitize_scores(probs, fill=0.5)
     times: List[float] = []
     for i in range(len(probs)):
         if not is_positive[i]:
@@ -278,6 +292,8 @@ def compute_early_warning_auc(
     early_start_delta: float = 50.0,
     early_end_delta: float = 5.0,
 ) -> float:
+    probs_signal = _sanitize_scores(probs_signal, fill=0.5)
+    probs_null = _sanitize_scores(probs_null, fill=0.5)
     scores: List[float] = []
     labels: List[int] = []
     for i in range(len(probs_signal)):
@@ -325,6 +341,7 @@ def compute_false_positive_rate(
     seq_lengths: np.ndarray,
     threshold: float,
 ) -> float:
+    probs = _sanitize_scores(probs, fill=0.5)
     total_steps = 0
     alert_steps = 0
     for i in range(len(probs)):

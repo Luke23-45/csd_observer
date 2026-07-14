@@ -284,7 +284,7 @@ def train_kalman(
         model.eval()
         with torch.no_grad():
             logits_val, zs_val, A_val, K_val, C_val, aux_logits_val = model(x_val, m_val)
-            probs_val = torch.sigmoid(logits_val).cpu().numpy()
+            probs_val = np.nan_to_num(torch.sigmoid(logits_val).cpu().numpy(), nan=0.5, posinf=1.0, neginf=0.0)
 
         if use_val_auc:
             from csd_observer.utils.metrics import compute_early_warning_auc as _ewa
@@ -344,5 +344,5 @@ def build_probs(
     model.eval()
     with torch.no_grad():
         logits, _, _, _, _, _ = model(x, m)
-        probs = torch.sigmoid(logits).cpu().numpy()
+        probs = np.nan_to_num(torch.sigmoid(logits).cpu().numpy(), nan=0.5, posinf=1.0, neginf=0.0)
     return probs
