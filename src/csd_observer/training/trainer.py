@@ -26,7 +26,7 @@ class TensorizedDataset:
     is_positive: torch.Tensor
 
 
-def _compute_ews(features: np.ndarray, seq_lengths: np.ndarray, window_size: int = 60) -> Tuple[np.ndarray, np.ndarray]:
+def _compute_ews(features: np.ndarray, seq_lengths: np.ndarray, window_size: int = 30) -> Tuple[np.ndarray, np.ndarray]:
     B, T, _ = features.shape
     W = min(window_size, T)
     csd = np.zeros((B, T), dtype=np.float32)
@@ -41,6 +41,9 @@ def _compute_ews(features: np.ndarray, seq_lengths: np.ndarray, window_size: int
             denom = np.sum(seg_c ** 2) + 1e-8
             csd[b, t] = num / denom
             rvar[b, t] = np.var(seg)
+        if W < L:
+            csd[b, :W] = csd[b, W]
+            rvar[b, :W] = rvar[b, W]
     return csd, rvar
 
 
