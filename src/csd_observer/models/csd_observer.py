@@ -20,12 +20,10 @@ class CSDKalmanObserver(nn.Module):
         self.lstm_head = lstm_head
         self.lstm_dim = lstm_dim
 
-        self.obs_proj = nn.Linear(input_dim, 1)
-
         A_init = torch.eye(latent_dim) * 0.95
         self.A = nn.Parameter(A_init)
-        self.C = nn.Parameter(torch.randn(1, latent_dim).mul(0.1))
-        self.K = nn.Parameter(torch.randn(latent_dim, 1).mul(0.1))
+        self.C = nn.Parameter(torch.randn(input_dim, latent_dim).mul(0.1))
+        self.K = nn.Parameter(torch.randn(latent_dim, input_dim).mul(0.1))
 
         if lstm_head:
             self.lstm_cell = nn.LSTMCell(latent_dim, lstm_dim)
@@ -47,8 +45,6 @@ class CSDKalmanObserver(nn.Module):
         self._init_weights()
 
     def _init_weights(self) -> None:
-        nn.init.xavier_normal_(self.obs_proj.weight)
-        nn.init.zeros_(self.obs_proj.bias)
         if self.lstm_head:
             for n, p in self.lstm_cell.named_parameters():
                 if "weight" in n:
@@ -87,11 +83,9 @@ class CSDKalmanObserver(nn.Module):
         zs = []
 
         for t in range(T):
-            x_t = x[:, t, :]
+            obs = x[:, t, :]
             if mask is not None:
-                x_t = x_t * mask[:, t, :]
-
-            obs = self.obs_proj(x_t)
+                obs = obs * mask[:, t, :]
 
             if self.lstm_head:
                 hx, cx = self.lstm_cell(z, (hx, cx))

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Literal, Optional
+from typing import Dict, Literal, Optional, Tuple
 
 import numpy as np
 import torch
@@ -26,10 +26,11 @@ class TensorizedDataset:
     is_positive: torch.Tensor
 
 
-def _compute_csd(features: np.ndarray, seq_lengths: np.ndarray, window_size: int = 30) -> np.ndarray:
+def _compute_ews(features: np.ndarray, seq_lengths: np.ndarray, window_size: int = 60) -> Tuple[np.ndarray, np.ndarray]:
     B, T, _ = features.shape
     W = min(window_size, T)
     csd = np.zeros((B, T), dtype=np.float32)
+    rvar = np.zeros((B, T), dtype=np.float32)
     for b in range(B):
         L = int(seq_lengths[b])
         seq = features[b, :, 0]
@@ -39,7 +40,8 @@ def _compute_csd(features: np.ndarray, seq_lengths: np.ndarray, window_size: int
             num = np.sum(seg_c[:-1] * seg_c[1:])
             denom = np.sum(seg_c ** 2) + 1e-8
             csd[b, t] = num / denom
-    return csd
+            rvar[b, t] = np.var(seg)
+    return csd, rvar
 
 
 def tensorize(dataset: Dict, device: torch.device) -> TensorizedDataset:
@@ -48,8 +50,12 @@ def tensorize(dataset: Dict, device: torch.device) -> TensorizedDataset:
 
     if dataset.get("augment_features", False):
         seq_lens_np = dataset["seq_lengths"]
-        csd = _compute_csd(features, seq_lens_np, window_size=30)
-        features = np.concatenate([features, csd.reshape(B, T, 1)], axis=-1)
+        csd, rvar = _compute_ews(features, seq_lens_np, window_size=60)
+        features = np.concatenate([
+            features,
+            csd.reshape(B, T, 1),
+            rvar.reshape(B, T, 1),
+        ], axis=-1)
         D = features.shape[-1]
 
     seq_lens = torch.tensor(dataset["seq_lengths"], dtype=torch.long, device=device)
