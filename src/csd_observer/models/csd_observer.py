@@ -13,6 +13,7 @@ class CSDKalmanObserver(nn.Module):
         latent_dim: int = 4,
         lstm_head: bool = False,
         lstm_dim: int = 8,
+        dropout: float = 0.0,
     ) -> None:
         super().__init__()
         self.input_dim = input_dim
@@ -29,16 +30,20 @@ class CSDKalmanObserver(nn.Module):
             self.lstm_cell = nn.LSTMCell(latent_dim, lstm_dim)
             self.out_head = nn.Sequential(
                 nn.LayerNorm(lstm_dim),
+                nn.Dropout(dropout) if dropout > 0 else nn.Identity(),
                 nn.Linear(lstm_dim, lstm_dim // 2),
                 nn.GELU(),
+                nn.Dropout(dropout) if dropout > 0 else nn.Identity(),
                 nn.Linear(lstm_dim // 2, 1),
             )
         else:
             h_dim = max(latent_dim // 2, 2)
             self.head = nn.Sequential(
                 nn.LayerNorm(latent_dim),
+                nn.Dropout(dropout) if dropout > 0 else nn.Identity(),
                 nn.Linear(latent_dim, h_dim),
                 nn.GELU(),
+                nn.Dropout(dropout) if dropout > 0 else nn.Identity(),
                 nn.Linear(h_dim, 1),
             )
 

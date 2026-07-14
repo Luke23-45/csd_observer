@@ -104,6 +104,7 @@ def train_kalman(
     seed: int,
     config: dict,
     device: torch.device,
+    val_arrays: Optional[dict] = None,
 ) -> CSDKalmanObserver:
     use_lstm = loss_type in ("lstm", "lstm_spec")
     use_spec = loss_type == "lstm_spec"
@@ -128,6 +129,7 @@ def train_kalman(
         latent_dim=model_cfg.get("latent_dim", 4),
         lstm_head=use_lstm,
         lstm_dim=model_cfg.get("lstm_dim", 8),
+        dropout=model_cfg.get("dropout", 0.0),
     ).to(device)
 
     lr = train_cfg.get("lr", 1e-3)
@@ -151,7 +153,11 @@ def train_kalman(
         spec_loss_fn = SpectralRadiusLoss(weight=spec_weight, threshold=spec_threshold)
 
     best_state: Optional[Dict[str, torch.Tensor]] = None
-    best_val_loss = float("inf")
+    use_val_auc = val_arrays is not None
+    if use_val_auc:
+        best_val_metric = -float("inf")
+    else:
+        best_val_metric = float("inf")
     stale_epochs = 0
     train_size = len(train_idx)
 
@@ -189,24 +195,40 @@ def train_kalman(
         model.eval()
         with torch.no_grad():
             logits_val, zs_val, A_val, K_val, C_val = model(x_val, m_val)
+            probs_val = torch.sigmoid(logits_val).cpu().numpy()
+
+        if use_val_auc:
+            from csd_observer.utils.metrics import compute_early_warning_auc as _ewa
+            is_pos_val = val_arrays["is_positive"][val_idx]
+            bif_t_val = val_arrays["bifurcation_times"][val_idx]
+            seq_l_val = val_arrays["seq_lengths"][val_idx]
+            sig_mask = is_pos_val & (bif_t_val > 0)
+            null_mask = ~is_pos_val
+            if sig_mask.any() and null_mask.any():
+                val_metric = _ewa(
+                    probs_val[sig_mask], bif_t_val[sig_mask], is_pos_val[sig_mask], seq_l_val[sig_mask],
+                    probs_val[null_mask], seq_l_val[null_mask],
+                )
+            else:
+                val_metric = float("nan")
+            improved = np.isfinite(val_metric) and val_metric > best_val_metric + 1e-4
+        else:
             targets_val = _make_targets(bif_val, lens_val, device, max_length=max_length, sigma=target_sigma)
             valid_mask_val = (
                 torch.arange(max_length, device=device).unsqueeze(0)
                 < lens_val.unsqueeze(1)
             ).float()
-
             bce_per_step_val = torch.nn.functional.binary_cross_entropy_with_logits(
                 logits_val, targets_val, reduction="none",
             )
-            val_loss = (bce_per_step_val * valid_mask_val).sum() / valid_mask_val.sum().clamp(min=1.0)
-
+            val_metric = (bce_per_step_val * valid_mask_val).sum() / valid_mask_val.sum().clamp(min=1.0)
             if use_spec and spec_loss_fn is not None:
-                val_loss = val_loss + spec_loss_fn(A_val, K_val, C_val)["loss"]
+                val_metric = val_metric + spec_loss_fn(A_val, K_val, C_val)["loss"]
+            val_metric = val_metric.item()
+            improved = val_metric < best_val_metric - 1e-6
 
-            val_loss = val_loss.item()
-
-        if val_loss < best_val_loss - 1e-6:
-            best_val_loss = val_loss
+        if improved:
+            best_val_metric = val_metric
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
             stale_epochs = 0
         else:

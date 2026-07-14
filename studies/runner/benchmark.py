@@ -45,12 +45,14 @@ from csd_observer.utils.metrics import (  # noqa: E402
     compute_early_warning_auc,
     compute_null_metrics,
     evaluate_raw_csd,
+    evaluate_raw_var,
     raw_csd_indicator,
+    raw_var_indicator,
     select_threshold,
 )
 
 SYSTEMS = ("fold", "hopf", "logistic")
-METHODS = ("Raw-CSD", "Kalman-BCE", "Kalman-LSTM", "Kalman-LSTM-Spec")
+METHODS = ("Raw-CSD", "RunningVar", "Kalman-BCE", "Kalman-LSTM", "Kalman-LSTM-Spec")
 _REAL_SYSTEMS: Dict[str, Callable] = {}
 
 
@@ -123,36 +125,45 @@ def _run_empirical_experiment(
     device: torch.device,
     writer: OutputWriter,
 ) -> SystemResult:
-    # 1. Merge the arrays for training on both
     B_sig = len(arrays_signal["is_positive"])
     features = np.concatenate([arrays_signal["features"], arrays_null["features"]], axis=0)
     seq_lengths = np.concatenate([arrays_signal["seq_lengths"], arrays_null["seq_lengths"]], axis=0)
     bifurcation_times = np.concatenate([arrays_signal["bifurcation_times"], arrays_null["bifurcation_times"]], axis=0)
     is_positive = np.concatenate([arrays_signal["is_positive"], arrays_null["is_positive"]], axis=0)
-    
-    split_indices = {}
-    for split in ("train", "val", "test"):
-        idx_sig = arrays_signal["split_indices"][split]
-        idx_null = arrays_null["split_indices"][split] + B_sig
-        split_indices[split] = np.concatenate([idx_sig, idx_null])
-        
+
+    all_idx = np.arange(len(is_positive))
+    sig_idx = np.where(is_positive)[0]
+    null_idx = np.where(~is_positive)[0]
+    n_folds = 5
+    cv_folds = []
+    for k in range(n_folds):
+        rng_fold = np.random.default_rng(42 + k * 101)
+        sig_shuffled = sig_idx.copy()
+        null_shuffled = null_idx.copy()
+        rng_fold.shuffle(sig_shuffled)
+        rng_fold.shuffle(null_shuffled)
+        sig_test = sig_shuffled[k::n_folds]
+        null_test = null_shuffled[k::n_folds]
+        test_mask = np.zeros(len(is_positive), dtype=bool)
+        test_mask[sig_test] = True
+        test_mask[null_test] = True
+        train_val_idx = np.where(~test_mask)[0]
+        val_size = max(1, len(train_val_idx) // 5)
+        rng_val = np.random.default_rng(k + 999)
+        rng_val.shuffle(train_val_idx)
+        train_idx = train_val_idx[val_size:]
+        val_idx = train_val_idx[:val_size]
+        cv_folds.append({"train": train_idx, "val": val_idx, "test": np.where(test_mask)[0]})
+
     merged_dataset = {
         "features": features,
         "seq_lengths": seq_lengths,
         "bifurcation_times": bifurcation_times,
         "is_positive": is_positive,
-        "split_indices": split_indices,
+        "split_indices": cv_folds[0],
         "augment_features": arrays_signal.get("augment_features", False)
     }
-    
-    tensors_merged = tensorize(merged_dataset, device)
-    
-    train_idx = merged_dataset["split_indices"]["train"]
-    val_idx = merged_dataset["split_indices"]["val"]
-    
-    test_idx_s = arrays_signal["split_indices"]["test"]
-    test_idx_n = arrays_null["split_indices"]["test"]
-    
+
     tensors_signal = tensorize(arrays_signal, device)
     tensors_null = tensorize(arrays_null, device)
 
@@ -163,72 +174,125 @@ def _run_empirical_experiment(
 
     runs: List[RunResult] = []
 
-    csd_scores_test = raw_csd_indicator(arrays_signal["features"][test_idx_s], arrays_signal["seq_lengths"][test_idx_s], 30)
-    csd_scores_null_test = raw_csd_indicator(arrays_null["features"][test_idx_n], arrays_null["seq_lengths"][test_idx_n], 30)
+    csd_scores_test = raw_csd_indicator(arrays_signal["features"], arrays_signal["seq_lengths"], 30)
+    csd_scores_null_test = raw_csd_indicator(arrays_null["features"], arrays_null["seq_lengths"], 30)
     raw_metrics = evaluate_raw_csd(
         csd_scores_test,
-        arrays_signal["bifurcation_times"][test_idx_s],
-        arrays_signal["is_positive"][test_idx_s],
-        arrays_signal["seq_lengths"][test_idx_s],
+        arrays_signal["bifurcation_times"],
+        arrays_signal["is_positive"],
+        arrays_signal["seq_lengths"],
         csd_scores_null_test,
-        arrays_null["seq_lengths"][test_idx_n],
+        arrays_null["seq_lengths"],
         threshold=0.6,
     )
     runs.append(RunResult(method="Raw-CSD", seed=0, metrics=raw_metrics))
     writer.write_result_row({"system": system, "seed": 0, "method": "Raw-CSD", **raw_metrics})
+
+    var_scores_test = raw_var_indicator(arrays_signal["features"], arrays_signal["seq_lengths"], 30)
+    var_scores_null_test = raw_var_indicator(arrays_null["features"], arrays_null["seq_lengths"], 30)
+    var_metrics = evaluate_raw_var(
+        var_scores_test,
+        arrays_signal["bifurcation_times"],
+        arrays_signal["is_positive"],
+        arrays_signal["seq_lengths"],
+        var_scores_null_test,
+        arrays_null["seq_lengths"],
+    )
+    runs.append(RunResult(method="RunningVar", seed=0, metrics=var_metrics))
+    writer.write_result_row({"system": system, "seed": 0, "method": "RunningVar", **var_metrics})
 
     methods_list = [
         ("Kalman-BCE", "bce"),
         ("Kalman-LSTM", "lstm"),
         ("Kalman-LSTM-Spec", "lstm_spec"),
     ]
-    total = len(seeds) * len(methods_list)
-    pbar = tqdm(total=total, desc=f"{system}", unit="run", leave=False)
-    for seed in seeds:
-        for method_name, loss_type in methods_list:
-            pbar.set_description(f"{system} {method_name}")
-            
-            # TRAIN on merged dataset
-            model = train_kalman(
-                tensors_merged, train_idx, val_idx,
-                loss_type=loss_type, seed=seed, config=config, device=device,
-            )
 
-            # EVALUATE on separate signal/null (just like synthetic!)
-            probs_test = build_probs(model, tensors_signal, test_idx_s)
-            probs_null = build_probs(model, tensors_null, test_idx_n)
-            
-            # Use merged val for threshold selection
-            probs_val = build_probs(model, tensors_merged, val_idx)
-            thresh = select_threshold(
-                probs_val,
-                merged_dataset["bifurcation_times"][val_idx],
-                merged_dataset["is_positive"][val_idx],
-                merged_dataset["seq_lengths"][val_idx],
-            )
+    for method_name, loss_type in methods_list:
+        for seed in seeds:
+            cv_metrics = {"detection_time": [], "ew_auc": [], "fpr": []}
+            for fold_idx, split in enumerate(cv_folds):
+                merged_dataset_fold = dict(merged_dataset)
+                merged_dataset_fold["split_indices"] = split
+                tensors_merged = tensorize(merged_dataset_fold, device)
 
-            dt = compute_detection_time(
-                probs_test,
-                arrays_signal["bifurcation_times"][test_idx_s],
-                arrays_signal["is_positive"][test_idx_s],
-                arrays_signal["seq_lengths"][test_idx_s],
-                thresh,
-            )
-            ewa = compute_early_warning_auc(
-                probs_test,
-                arrays_signal["bifurcation_times"][test_idx_s],
-                arrays_signal["is_positive"][test_idx_s],
-                arrays_signal["seq_lengths"][test_idx_s],
-                probs_null,
-                arrays_null["seq_lengths"][test_idx_n],
-            )
-            null_met = compute_null_metrics(probs_null, thresh, arrays_null["seq_lengths"][test_idx_n])
+                train_idx = split["train"]
+                val_idx = split["val"]
+                test_idx = split["test"]
+                test_mask_sig = test_idx < B_sig
+                test_idx_s = test_idx[test_mask_sig]
+                test_idx_n = test_idx[~test_mask_sig]
 
-            metrics = {"detection_time": dt, "ew_auc": ewa, **null_met}
+                val_arrays_local = {
+                    "is_positive": is_positive,
+                    "bifurcation_times": bifurcation_times,
+                    "seq_lengths": seq_lengths,
+                }
+
+                rng = np.random.default_rng(seed + fold_idx * 101)
+                model = train_kalman(
+                    tensors_merged, train_idx, val_idx,
+                    loss_type=loss_type, seed=seed + fold_idx * 101,
+                    config=config, device=device,
+                    val_arrays=val_arrays_local,
+                )
+
+                if len(test_idx_s) > 0:
+                    probs_test = build_probs(model, tensors_signal, test_idx_s)
+                else:
+                    probs_test = np.zeros((0, tensors_merged.features.shape[1]))
+                if len(test_idx_n) > 0:
+                    probs_null = build_probs(model, tensors_null, test_idx_n)
+                else:
+                    probs_null = np.zeros((0, tensors_merged.features.shape[1]))
+
+                probs_val_all = build_probs(model, tensors_merged, val_idx)
+                val_null_mask = val_idx >= B_sig
+                if val_null_mask.any():
+                    null_val_probs = probs_val_all[val_null_mask]
+                    null_val_lens = seq_lengths[val_idx[val_null_mask]]
+                else:
+                    null_val_probs = None
+                    null_val_lens = None
+                thresh = select_threshold(
+                    probs_val_all,
+                    bifurcation_times[val_idx],
+                    is_positive[val_idx],
+                    seq_lengths[val_idx],
+                    null_probs=null_val_probs,
+                    null_seq_lengths=null_val_lens,
+                )
+
+                dt = compute_detection_time(
+                    probs_test,
+                    arrays_signal["bifurcation_times"][test_idx_s],
+                    arrays_signal["is_positive"][test_idx_s],
+                    arrays_signal["seq_lengths"][test_idx_s],
+                    thresh,
+                )
+                ewa = compute_early_warning_auc(
+                    probs_test,
+                    arrays_signal["bifurcation_times"][test_idx_s],
+                    arrays_signal["is_positive"][test_idx_s],
+                    arrays_signal["seq_lengths"][test_idx_s],
+                    probs_null,
+                    arrays_null["seq_lengths"][test_idx_n],
+                )
+                null_met = compute_null_metrics(probs_null, thresh, arrays_null["seq_lengths"][test_idx_n])
+
+                cv_metrics["detection_time"].append(dt)
+                cv_metrics["ew_auc"].append(ewa)
+                cv_metrics["fpr"].append(null_met.get("fpr", float("nan")))
+
+            metrics = {
+                "detection_time": float(np.nanmean(cv_metrics["detection_time"])),
+                "ew_auc": float(np.nanmean(cv_metrics["ew_auc"])),
+                "fpr": float(np.nanmean(cv_metrics["fpr"])),
+                "detection_time_std": float(np.nanstd(cv_metrics["detection_time"])),
+                "ew_auc_std": float(np.nanstd(cv_metrics["ew_auc"])),
+                "fpr_std": float(np.nanstd(cv_metrics["fpr"])),
+            }
             runs.append(RunResult(method=method_name, seed=seed, metrics=metrics))
             writer.write_result_row({"system": system, "seed": seed, "method": method_name, **metrics})
-            pbar.update(1)
-    pbar.close()
 
     return SystemResult(system=system, runs=runs)
 
@@ -269,6 +333,19 @@ def _run_synthetic_experiment(
     )
     runs.append(RunResult(method="Raw-CSD", seed=0, metrics=raw_metrics))
     writer.write_result_row({"system": system, "seed": 0, "method": "Raw-CSD", **raw_metrics})
+
+    var_scores_test = raw_var_indicator(arrays_signal["features"][test_idx_s], arrays_signal["seq_lengths"][test_idx_s], 30)
+    var_scores_null_test = raw_var_indicator(arrays_null["features"][test_idx_n], arrays_null["seq_lengths"][test_idx_n], 30)
+    var_metrics = evaluate_raw_var(
+        var_scores_test,
+        arrays_signal["bifurcation_times"][test_idx_s],
+        arrays_signal["is_positive"][test_idx_s],
+        arrays_signal["seq_lengths"][test_idx_s],
+        var_scores_null_test,
+        arrays_null["seq_lengths"][test_idx_n],
+    )
+    runs.append(RunResult(method="RunningVar", seed=0, metrics=var_metrics))
+    writer.write_result_row({"system": system, "seed": 0, "method": "RunningVar", **var_metrics})
 
     methods_list = [
         ("Kalman-BCE", "bce"),
@@ -329,9 +406,12 @@ def _verdict_system(agg: Dict[str, Dict[str, float]], system: str) -> Tuple[bool
     dt_lstm = _mean_metric(agg, "Kalman-LSTM", "detection_time")
     dt_spec = _mean_metric(agg, "Kalman-LSTM-Spec", "detection_time")
     dt_raw = _mean_metric(agg, "Raw-CSD", "detection_time")
+    dt_var = _mean_metric(agg, "RunningVar", "detection_time")
 
     ewa_bce = _mean_metric(agg, "Kalman-BCE", "ew_auc")
     ewa_lstm = _mean_metric(agg, "Kalman-LSTM", "ew_auc")
+    ewa_raw = _mean_metric(agg, "Raw-CSD", "ew_auc")
+    ewa_var = _mean_metric(agg, "RunningVar", "ew_auc")
 
     fpr_lstm = _mean_metric(agg, "Kalman-LSTM", "fpr")
     fpr_bce = _mean_metric(agg, "Kalman-BCE", "fpr")
@@ -342,9 +422,12 @@ def _verdict_system(agg: Dict[str, Dict[str, float]], system: str) -> Tuple[bool
     def safe(v: float) -> str:
         return f"{v:.3f}" if np.isfinite(v) else "nan"
     reasons.append(f"  Raw-CSD detection time:            {safe(dt_raw)}")
+    reasons.append(f"  RunningVar detection time:         {safe(dt_var)}")
     reasons.append(f"  Kalman-BCE detection time:         {safe(dt_bce)}")
     reasons.append(f"  Kalman-LSTM detection time:        {safe(dt_lstm)}")
     reasons.append(f"  Kalman-LSTM-Spec detection time:   {safe(dt_spec)}")
+    reasons.append(f"  Raw-CSD EW-AUC:                    {safe(ewa_raw)}")
+    reasons.append(f"  RunningVar EW-AUC:                 {safe(ewa_var)}")
     reasons.append(f"  DT gain (LSTM vs BCE):             {safe(dt_gain)}")
     reasons.append(f"  EW-AUC gain (LSTM vs BCE):         {safe(ewa_gain)}")
     reasons.append(f"  FPR ratio (LSTM/BCE null):         {safe(fpr_lstm / max(fpr_bce, 1e-8))}")

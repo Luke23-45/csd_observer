@@ -1,9 +1,9 @@
-epochs: 100
-batch_size: 8
-lr: 0.001
-weight_decay: 0.00001
-patience: 10
-spectral_radius_weight: 0.1
+epochs: 50
+batch_size: 16
+lr: 0.0005
+weight_decay: 0.001
+patience: 15
+spectral_radius_weight: 0.05
 spectral_threshold: 0.95
 scheduler_eta_min: 0.000001
 target_sigma: 80
