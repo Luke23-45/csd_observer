@@ -57,8 +57,11 @@ def evaluate_raw_csd(
     for i in range(len(csd_scores_null)):
         T = int(seq_lens_null[i])
         if T > 0:
-            early_probs.append(float(np.max(csd_scores_null[i, :T])))
-            early_labels.append(0)
+            ep_start = max(0, int(T - early_start_delta))
+            ep_end = max(0, int(T - early_end_delta))
+            if ep_end > ep_start:
+                early_probs.append(float(np.max(csd_scores_null[i, ep_start:ep_end])))
+                early_labels.append(0)
 
     dt = float(np.mean(detection_times)) if detection_times else float("nan")
     ewa = float(roc_auc_score(early_labels, early_probs)) if len(set(early_labels)) >= 2 else float("nan")
@@ -147,8 +150,12 @@ def compute_early_warning_auc(
     for i in range(len(probs_null)):
         T = int(seq_lens_null[i])
         if T > 0:
-            scores.append(float(np.max(probs_null[i, :T])))
-            labels.append(0)
+            t_start = max(0, int(T - early_start_delta))
+            t_end = max(0, int(T - early_end_delta))
+            window = probs_null[i, t_start:t_end]
+            if len(window) > 0:
+                scores.append(float(np.max(window)))
+                labels.append(0)
     if len(set(labels)) < 2:
         return float("nan")
     return float(roc_auc_score(labels, scores))
