@@ -114,19 +114,33 @@ def _make_targets(
     return target * valid_len.float()
 
 
+def _make_aux_targets(
+    features: torch.Tensor,
+    seq_lengths: torch.Tensor,
+    device: torch.device,
+    *,
+    window_size: int = 60,
+) -> torch.Tensor:
+    features_np = features.detach().cpu().numpy()
+    seq_lengths_np = seq_lengths.detach().cpu().numpy()
+    _, _, lag2, alternans = _compute_ews(features_np, seq_lengths_np, window_size=window_size)
+    return torch.tensor(np.stack([lag2, alternans], axis=-1), dtype=torch.float32, device=device)
+
+
 def train_kalman(
     tensors: TensorizedDataset,
     train_idx: np.ndarray,
     val_idx: np.ndarray,
     *,
-    loss_type: Literal["bce", "lstm", "lstm_spec"],
+    loss_type: Literal["bce", "lstm", "lstm_spec", "lstm_aux"],
     seed: int,
     config: dict,
     device: torch.device,
     val_arrays: Optional[dict] = None,
 ) -> CSDKalmanObserver:
-    use_lstm = loss_type in ("lstm", "lstm_spec")
+    use_lstm = loss_type in ("lstm", "lstm_spec", "lstm_aux")
     use_spec = loss_type == "lstm_spec"
+    use_aux = loss_type == "lstm_aux"
     n_features = tensors.features.shape[-1]
 
     model_cfg = config.get("model", {})
@@ -149,6 +163,8 @@ def train_kalman(
         lstm_head=use_lstm,
         lstm_dim=model_cfg.get("lstm_dim", 8),
         dropout=model_cfg.get("dropout", 0.0),
+        aux_head=use_aux,
+        aux_dim=model_cfg.get("aux_dim", 2),
     ).to(device)
 
     lr = train_cfg.get("lr", 1e-3)
@@ -160,7 +176,28 @@ def train_kalman(
     spec_threshold = train_cfg.get("spectral_threshold", 0.95)
     scheduler_eta_min = train_cfg.get("scheduler_eta_min", 1e-6)
     target_sigma = train_cfg.get("target_sigma", None)
+    aux_loss_weight = train_cfg.get("aux_loss_weight", 0.3)
     max_length = x_train.shape[1]
+
+    aux_targets = None
+    aux_train = None
+    aux_val = None
+    aux_mean = None
+    aux_std = None
+    if use_aux:
+        aux_targets = _make_aux_targets(tensors.features, tensors.seq_lengths, device, window_size=train_cfg.get("aux_window", 60))
+        aux_train = aux_targets[train_idx]
+        aux_val = aux_targets[val_idx]
+        train_valid = (
+            torch.arange(max_length, device=device).unsqueeze(0)
+            < lens_train.unsqueeze(1)
+        ).unsqueeze(-1).float()
+        train_mask_sum = train_valid.sum(dim=(0, 1)).clamp(min=1.0)
+        aux_mean = (aux_train * train_valid).sum(dim=(0, 1)) / train_mask_sum
+        aux_var = (((aux_train - aux_mean) * train_valid) ** 2).sum(dim=(0, 1)) / train_mask_sum
+        aux_std = torch.sqrt(aux_var.clamp(min=1e-6))
+        aux_train = (aux_train - aux_mean) / aux_std
+        aux_val = (aux_val - aux_mean) / aux_std
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -185,7 +222,7 @@ def train_kalman(
         order = torch.randperm(train_size, device=device)
         for start in range(0, train_size, batch_size):
             batch_ids = order[start : start + batch_size]
-            logits, zs, A, K, C = model(x_train[batch_ids], m_train[batch_ids])
+            logits, zs, A, K, C, aux_logits = model(x_train[batch_ids], m_train[batch_ids])
 
             targets = _make_targets(
                 bif_train[batch_ids], lens_train[batch_ids], device,
@@ -201,6 +238,12 @@ def train_kalman(
             )
             loss = (bce_per_step * valid_mask).sum() / valid_mask.sum().clamp(min=1.0)
 
+            if use_aux and aux_logits is not None and aux_train is not None:
+                aux_target_batch = aux_train[batch_ids]
+                aux_loss_mask = valid_mask.unsqueeze(-1)
+                aux_loss = ((aux_logits - aux_target_batch) ** 2 * aux_loss_mask).sum() / aux_loss_mask.sum().clamp(min=1.0)
+                loss = loss + aux_loss_weight * aux_loss
+
             if use_spec and spec_loss_fn is not None:
                 loss = loss + spec_loss_fn(A, K, C)["loss"]
 
@@ -213,7 +256,7 @@ def train_kalman(
 
         model.eval()
         with torch.no_grad():
-            logits_val, zs_val, A_val, K_val, C_val = model(x_val, m_val)
+            logits_val, zs_val, A_val, K_val, C_val, aux_logits_val = model(x_val, m_val)
             probs_val = torch.sigmoid(logits_val).cpu().numpy()
 
         if use_val_auc:
@@ -241,6 +284,10 @@ def train_kalman(
                 logits_val, targets_val, reduction="none",
             )
             val_metric = (bce_per_step_val * valid_mask_val).sum() / valid_mask_val.sum().clamp(min=1.0)
+            if use_aux and aux_logits_val is not None and aux_val is not None:
+                aux_loss_mask_val = valid_mask_val.unsqueeze(-1)
+                aux_val_loss = ((aux_logits_val - aux_val) ** 2 * aux_loss_mask_val).sum() / aux_loss_mask_val.sum().clamp(min=1.0)
+                val_metric = val_metric + aux_loss_weight * aux_val_loss
             if use_spec and spec_loss_fn is not None:
                 val_metric = val_metric + spec_loss_fn(A_val, K_val, C_val)["loss"]
             val_metric = val_metric.item()
@@ -269,6 +316,6 @@ def build_probs(
     m = tensors.masks[indices]
     model.eval()
     with torch.no_grad():
-        logits, _, _, _, _ = model(x, m)
+        logits, _, _, _, _, _ = model(x, m)
         probs = torch.sigmoid(logits).cpu().numpy()
     return probs

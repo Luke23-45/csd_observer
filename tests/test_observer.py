@@ -21,22 +21,25 @@ def test_model_creation() -> None:
 
 def test_model_forward() -> None:
     from csd_observer.models.csd_observer import CSDKalmanObserver
-    model = CSDKalmanObserver(input_dim=1, latent_dim=4, lstm_head=True)
+    model = CSDKalmanObserver(input_dim=1, latent_dim=4, lstm_head=True, aux_head=True)
     x = torch.randn(8, 200, 1)
-    logits, zs, A, K, C = model(x)
+    logits, zs, A, K, C, aux = model(x)
     assert logits.shape == (8, 200)
     assert zs.shape == (8, 200, 4)
     assert A.shape == (4, 4)
     assert K.shape == (4, 1)
     assert C.shape == (1, 4)
+    assert aux is not None
+    assert aux.shape == (8, 200, 2)
 
 
 def test_model_bce_forward() -> None:
     from csd_observer.models.csd_observer import CSDKalmanObserver
     model = CSDKalmanObserver(input_dim=1, latent_dim=4, lstm_head=False)
     x = torch.randn(4, 100, 1)
-    logits, zs, A, K, C = model(x)
+    logits, zs, A, K, C, aux = model(x)
     assert logits.shape == (4, 100)
+    assert aux is None
 
 
 def test_loss_creation() -> None:
@@ -252,6 +255,7 @@ def test_evaluate_raw_csd() -> None:
     metrics_lag2 = evaluate_raw_lag2(scores, bif_times, is_pos, seq_lens, scores_null, seq_lens, threshold=0.5)
     assert "detection_time" in metrics_lag2
     assert "ew_auc" in metrics_lag2
+    assert "fpr" in metrics_lag2
 
 
 def test_compute_null_metrics() -> None:
@@ -355,5 +359,29 @@ def test_train_kalman_spec() -> None:
         loss_type="lstm_spec", seed=42, config=config, device=device,
     )
     assert model.lstm_head
+    probs = build_probs(model, tensors, data["split_indices"]["test"])
+    assert probs.shape[0] == len(data["split_indices"]["test"])
+
+
+def test_train_kalman_aux() -> None:
+    from csd_observer.config.load import load_config
+    from csd_observer.data.bifurcation import build_dataset
+    from csd_observer.training.trainer import build_probs, tensorize, train_kalman
+
+    config = load_config("default")
+    config["data"]["max_length"] = 30
+    config["data"]["n_patients"] = 20
+    config["training"]["epochs"] = 2
+    config["training"]["aux_loss_weight"] = 0.3
+
+    data = build_dataset("fold", n_trajectories=20, max_length=30, noise_scale=0.1, seed=42, null=False)
+    device = torch.device("cpu")
+    tensors = tensorize(data, device)
+    model = train_kalman(
+        tensors, data["split_indices"]["train"], data["split_indices"]["val"],
+        loss_type="lstm_aux", seed=42, config=config, device=device,
+    )
+    assert model.lstm_head
+    assert model.aux_head
     probs = build_probs(model, tensors, data["split_indices"]["test"])
     assert probs.shape[0] == len(data["split_indices"]["test"])

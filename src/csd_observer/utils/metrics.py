@@ -193,7 +193,8 @@ def evaluate_raw_lag2(
 
     dt = float(np.mean(detection_times)) if detection_times else float("nan")
     ewa = float(roc_auc_score(early_labels, early_probs)) if len(set(early_labels)) >= 2 else float("nan")
-    return {"detection_time": dt, "ew_auc": ewa}
+    fpr = float(compute_false_positive_rate(lag2_scores_null, seq_lens_null, threshold))
+    return {"detection_time": dt, "ew_auc": ewa, "fpr": fpr}
 
 
 def select_threshold(

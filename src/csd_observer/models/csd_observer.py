@@ -14,12 +14,16 @@ class CSDKalmanObserver(nn.Module):
         lstm_head: bool = False,
         lstm_dim: int = 8,
         dropout: float = 0.0,
+        aux_head: bool = False,
+        aux_dim: int = 2,
     ) -> None:
         super().__init__()
         self.input_dim = input_dim
         self.latent_dim = latent_dim
         self.lstm_head = lstm_head
         self.lstm_dim = lstm_dim
+        self.aux_head = aux_head
+        self.aux_dim = aux_dim
 
         A_init = torch.eye(latent_dim) * 0.95
         self.A = nn.Parameter(A_init)
@@ -36,6 +40,15 @@ class CSDKalmanObserver(nn.Module):
                 nn.Dropout(dropout) if dropout > 0 else nn.Identity(),
                 nn.Linear(lstm_dim // 2, 1),
             )
+            if aux_head:
+                self.aux_out = nn.Sequential(
+                    nn.LayerNorm(lstm_dim),
+                    nn.Dropout(dropout) if dropout > 0 else nn.Identity(),
+                    nn.Linear(lstm_dim, max(lstm_dim // 2, aux_dim)),
+                    nn.GELU(),
+                    nn.Dropout(dropout) if dropout > 0 else nn.Identity(),
+                    nn.Linear(max(lstm_dim // 2, aux_dim), aux_dim),
+                )
         else:
             h_dim = max(latent_dim // 2, 2)
             self.head = nn.Sequential(
@@ -58,6 +71,11 @@ class CSDKalmanObserver(nn.Module):
                 if isinstance(m, nn.Linear):
                     nn.init.xavier_uniform_(m.weight)
                     nn.init.zeros_(m.bias)
+            if self.aux_head:
+                for m in self.aux_out.modules():
+                    if isinstance(m, nn.Linear):
+                        nn.init.xavier_uniform_(m.weight)
+                        nn.init.zeros_(m.bias)
         else:
             for m in self.head.modules():
                 if isinstance(m, nn.Linear):
@@ -85,6 +103,7 @@ class CSDKalmanObserver(nn.Module):
             eye_mat = torch.eye(d, device=device)
 
         logits = []
+        aux_logits = []
         zs = []
 
         for t in range(T):
@@ -95,6 +114,8 @@ class CSDKalmanObserver(nn.Module):
             if self.lstm_head:
                 hx, cx = self.lstm_cell(z, (hx, cx))
                 logits_t = self.out_head(hx)
+                if self.aux_head:
+                    aux_logits.append(self.aux_out(hx))
                 alpha_t = torch.sigmoid(logits_t)
                 A_t = (1.0 - alpha_t.unsqueeze(-1)) * A.unsqueeze(0) + alpha_t.unsqueeze(-1) * eye_mat.unsqueeze(0)
                 z_pred = torch.bmm(A_t, z.unsqueeze(-1)).squeeze(-1)
@@ -111,8 +132,9 @@ class CSDKalmanObserver(nn.Module):
 
         logits = torch.stack(logits, dim=1).squeeze(-1)
         zs = torch.stack(zs, dim=1)
+        aux = torch.stack(aux_logits, dim=1) if aux_logits else None
 
-        return logits, zs, A, K, C
+        return logits, zs, A, K, C, aux
 
     def count_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
@@ -122,5 +144,6 @@ class CSDKalmanObserver(nn.Module):
             f"CSDKalmanObserver(input_dim={self.input_dim}, "
             f"latent_dim={self.latent_dim}, "
             f"lstm_head={self.lstm_head}, "
+            f"aux_head={self.aux_head}, "
             f"params={self.count_parameters():,})"
         )
