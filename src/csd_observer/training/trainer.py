@@ -159,7 +159,7 @@ def train_kalman(
     train_idx: np.ndarray,
     val_idx: np.ndarray,
     *,
-    loss_type: Literal["bce", "lstm", "lstm_spec", "lstm_aux"],
+    loss_type: Literal["bce", "lstm", "lstm_spec", "lstm_aux", "parity"],
     seed: int,
     config: dict,
     device: torch.device,
@@ -168,6 +168,7 @@ def train_kalman(
     use_lstm = loss_type in ("lstm", "lstm_spec", "lstm_aux")
     use_spec = loss_type == "lstm_spec"
     use_aux = loss_type == "lstm_aux"
+    use_parity = loss_type == "parity"
     n_features = tensors.features.shape[-1]
 
     model_cfg = config.get("model", {})
@@ -192,6 +193,8 @@ def train_kalman(
         dropout=model_cfg.get("dropout", 0.0),
         aux_head=use_aux,
         aux_dim=model_cfg.get("aux_dim", 2),
+        parity_aware=use_parity,
+        parity_channel=None,
     ).to(device)
 
     lr = train_cfg.get("lr", 1e-3)
@@ -211,8 +214,10 @@ def train_kalman(
     aux_val = None
     aux_mean = None
     aux_std = None
-    if use_aux:
+    if use_aux or use_parity:
         aux_targets = _make_aux_targets(tensors.features, tensors.seq_lengths, device, window_size=train_cfg.get("aux_window", 60))
+        if use_parity:
+            aux_targets = aux_targets[..., 0:1]
         aux_train = aux_targets[train_idx]
         aux_val = aux_targets[val_idx]
         train_valid = (
@@ -265,7 +270,7 @@ def train_kalman(
             )
             loss = (bce_per_step * valid_mask).sum() / valid_mask.sum().clamp(min=1.0)
 
-            if use_aux and aux_logits is not None and aux_train is not None:
+            if (use_aux or use_parity) and aux_logits is not None and aux_train is not None:
                 aux_target_batch = aux_train[batch_ids]
                 aux_loss_mask = valid_mask.unsqueeze(-1)
                 aux_loss = ((aux_logits - aux_target_batch) ** 2 * aux_loss_mask).sum() / aux_loss_mask.sum().clamp(min=1.0)
@@ -284,6 +289,8 @@ def train_kalman(
         model.eval()
         with torch.no_grad():
             logits_val, zs_val, A_val, K_val, C_val, aux_logits_val = model(x_val, m_val)
+            if use_parity:
+                A_val = K_val = C_val = None
             probs_val = np.nan_to_num(torch.sigmoid(logits_val).cpu().numpy(), nan=0.5, posinf=1.0, neginf=0.0)
 
         if use_val_auc:
@@ -300,7 +307,6 @@ def train_kalman(
                 )
             else:
                 val_metric = float("nan")
-            improved = np.isfinite(val_metric) and val_metric > best_val_metric + 1e-4
         else:
             targets_val = _make_targets(bif_val, lens_val, device, max_length=max_length, sigma=target_sigma)
             valid_mask_val = (
@@ -311,19 +317,27 @@ def train_kalman(
                 logits_val, targets_val, reduction="none",
             )
             val_metric = (bce_per_step_val * valid_mask_val).sum() / valid_mask_val.sum().clamp(min=1.0)
-            if use_aux and aux_logits_val is not None and aux_val is not None:
+            if (use_aux or use_parity) and aux_logits_val is not None and aux_val is not None:
                 aux_loss_mask_val = valid_mask_val.unsqueeze(-1)
                 aux_val_loss = ((aux_logits_val - aux_val) ** 2 * aux_loss_mask_val).sum() / aux_loss_mask_val.sum().clamp(min=1.0)
                 val_metric = val_metric + aux_loss_weight * aux_val_loss
             if use_spec and spec_loss_fn is not None:
                 val_metric = val_metric + spec_loss_fn(A_val, K_val, C_val)["loss"]
             val_metric = val_metric.item()
-            improved = val_metric < best_val_metric - 1e-6
 
-        if improved:
-            best_val_metric = val_metric
-            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-            stale_epochs = 0
+        if np.isfinite(val_metric):
+            if use_val_auc:
+                improved = val_metric > best_val_metric + 1e-4
+            else:
+                improved = val_metric < best_val_metric - 1e-6
+            if improved:
+                best_val_metric = val_metric
+                best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+                stale_epochs = 0
+            else:
+                stale_epochs += 1
+                if stale_epochs >= patience:
+                    break
         else:
             stale_epochs += 1
             if stale_epochs >= patience:

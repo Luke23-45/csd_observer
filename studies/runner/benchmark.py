@@ -65,6 +65,7 @@ METHODS = (
     "Kalman-Lag2", "Kalman-BCE",
     "Kalman-LSTM", "Kalman-LSTM-Spec", "Kalman-LSTM-Aux",
     "Kalman-Lag2-Net",
+    "Kalman-ACKO",
 )
 _REAL_SYSTEMS: Dict[str, Callable] = {}
 
@@ -258,6 +259,7 @@ def _run_empirical_experiment(
         ("Kalman-BCE", "bce"),
         ("Kalman-LSTM", "lstm"),
         ("Kalman-LSTM-Spec", "lstm_spec"),
+        ("Kalman-ACKO", "parity"),
     ]
     if system == "chick_heart":
         methods_list.append(("Kalman-LSTM-Aux", "lstm_aux"))
@@ -581,6 +583,7 @@ def _run_synthetic_experiment(
         ("Kalman-BCE", "bce"),
         ("Kalman-LSTM", "lstm"),
         ("Kalman-LSTM-Spec", "lstm_spec"),
+        ("Kalman-ACKO", "parity"),
     ]
     methods_list = [(n, lt) for n, lt in methods_list if _enabled(n)]
     total = len(seeds) * len(methods_list)

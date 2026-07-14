@@ -519,3 +519,78 @@ def test_kalman_lag2_net_forward_numpy() -> None:
     with torch.no_grad():
         logits = model(torch.from_numpy(y))
     assert logits.shape == (B, T)
+
+
+def test_acko_creation() -> None:
+    from csd_observer.models.csd_observer import CSDKalmanObserver
+    model = CSDKalmanObserver(input_dim=2, latent_dim=4, parity_aware=True)
+    assert model.parity_aware
+    assert model.parity_channel == 1
+    assert model.lstm_head is False
+    assert model.aux_head is False
+    assert model.count_parameters() > 0
+
+
+def test_acko_forward() -> None:
+    from csd_observer.models.csd_observer import CSDKalmanObserver
+    model = CSDKalmanObserver(input_dim=2, latent_dim=4, parity_aware=True)
+    B, T = 4, 100
+    x = torch.randn(B, T, 2)
+    x[:, :, 1] = 1.0  # default parity = +1 (even)
+    x[:, 1::2, 1] = -1.0  # odd beats = -1
+    logits, zs, A, K, C, alt = model(x)
+    assert logits.shape == (B, T)
+    assert zs.shape == (B, T, 4)
+    assert A is None
+    assert K is None
+    assert C is None
+    assert alt is not None
+    assert alt.shape == (B, T, 1)
+
+
+def test_acko_forward_masked() -> None:
+    from csd_observer.models.csd_observer import CSDKalmanObserver
+    model = CSDKalmanObserver(input_dim=2, latent_dim=4, parity_aware=True)
+    B, T = 4, 100
+    x = torch.randn(B, T, 2)
+    x[:, :, 1] = 1.0
+    x[:, 1::2, 1] = -1.0
+    mask = torch.ones(B, T, 2)
+    mask[:, 50:, :] = 0.0
+    logits, zs, _, _, _, alt = model(x, mask)
+    assert logits.shape == (B, T)
+    assert torch.isfinite(logits).all()
+    assert alt.shape == (B, T, 1)
+
+
+def test_acko_odd_latent_dim_raises() -> None:
+    import pytest
+    from csd_observer.models.csd_observer import CSDKalmanObserver
+    with pytest.raises(ValueError, match="latent_dim even"):
+        CSDKalmanObserver(input_dim=2, latent_dim=3, parity_aware=True)
+
+
+def test_train_kalman_parity() -> None:
+    from csd_observer.config.load import load_config
+    from csd_observer.data.bifurcation import build_dataset
+    from csd_observer.training.trainer import build_probs, tensorize, train_kalman
+
+    config = load_config("default")
+    config["data"]["max_length"] = 30
+    config["data"]["n_patients"] = 20
+    config["training"]["epochs"] = 2
+
+    data = build_dataset("fold", n_trajectories=20, max_length=30, noise_scale=0.1, seed=42, null=False)
+    data["augment_features"] = True
+    data["phase_features"] = True
+    device = torch.device("cpu")
+    tensors = tensorize(data, device)
+    model = train_kalman(
+        tensors, data["split_indices"]["train"], data["split_indices"]["val"],
+        loss_type="parity", seed=42, config=config, device=device,
+    )
+    assert model.parity_aware
+    assert not model.lstm_head
+    probs = build_probs(model, tensors, data["split_indices"]["test"])
+    assert probs.shape[0] == len(data["split_indices"]["test"])
+    assert np.isfinite(probs).all()
