@@ -222,18 +222,11 @@ def _run_empirical_experiment(
                 test_idx_s = test_idx[test_mask_sig]
                 test_idx_n = test_idx[~test_mask_sig] - B_sig
 
-                val_arrays_local = {
-                    "is_positive": is_positive,
-                    "bifurcation_times": bifurcation_times,
-                    "seq_lengths": seq_lengths,
-                }
-
                 rng = np.random.default_rng(seed + fold_idx * 101)
                 model = train_kalman(
                     tensors_merged, train_idx, val_idx,
                     loss_type=loss_type, seed=seed + fold_idx * 101,
                     config=config, device=device,
-                    val_arrays=val_arrays_local,
                 )
 
                 if len(test_idx_s) > 0:
