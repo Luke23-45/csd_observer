@@ -163,7 +163,8 @@ def _run_empirical_experiment(
         "bifurcation_times": bifurcation_times,
         "is_positive": is_positive,
         "split_indices": cv_folds[0],
-        "augment_features": arrays_signal.get("augment_features", False)
+        "augment_features": arrays_signal.get("augment_features", False),
+        "phase_features": arrays_signal.get("phase_features", False),
     }
 
     tensors_signal = tensorize(arrays_signal, device)

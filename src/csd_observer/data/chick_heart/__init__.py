@@ -32,6 +32,7 @@ def build_benchmark_datasets(
             "is_positive": combined["is_positive"][global_idx],
             "split_indices": new_splits,
             "augment_features": True,
+            "phase_features": True,
         }
 
     arrays_signal = _subset(pos_idx)

@@ -9,3 +9,4 @@ seed_offset: 0
 null_seed_offset: 100
 split_seed: 1042
 augment_features: true
+phase_features: true

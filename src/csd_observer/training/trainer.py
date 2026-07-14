@@ -64,12 +64,35 @@ def _compute_ews(
     return csd, rvar, lag2, alternans
 
 
+def _compute_phase_features(features: np.ndarray, seq_lengths: np.ndarray) -> np.ndarray:
+    B, T, _ = features.shape
+    phase = np.zeros((B, T, 4), dtype=np.float32)
+    for b in range(B):
+        L = int(seq_lengths[b])
+        if L <= 0:
+            continue
+        seq = features[b, :L, 0]
+        delta1 = np.zeros(L, dtype=np.float32)
+        delta2 = np.zeros(L, dtype=np.float32)
+        if L > 1:
+            delta1[1:] = seq[1:] - seq[:-1]
+            delta2[1:] = delta1[1:] - delta1[:-1]
+        t_norm = np.linspace(0.0, 1.0, L, dtype=np.float32) if L > 1 else np.zeros(L, dtype=np.float32)
+        parity = np.ones(L, dtype=np.float32)
+        parity[1::2] = -1.0
+        phase[b, :L, 0] = delta1
+        phase[b, :L, 1] = delta2
+        phase[b, :L, 2] = t_norm
+        phase[b, :L, 3] = parity
+    return phase
+
+
 def tensorize(dataset: Dict, device: torch.device) -> TensorizedDataset:
     features = dataset["features"]
     B, T, D = features.shape
+    seq_lens_np = dataset["seq_lengths"]
 
     if dataset.get("augment_features", False):
-        seq_lens_np = dataset["seq_lengths"]
         csd, rvar, lag2, alternans = _compute_ews(features, seq_lens_np, window_size=60)
         features = np.concatenate([
             features,
@@ -78,6 +101,10 @@ def tensorize(dataset: Dict, device: torch.device) -> TensorizedDataset:
             lag2.reshape(B, T, 1),
             alternans.reshape(B, T, 1),
         ], axis=-1)
+        D = features.shape[-1]
+    if dataset.get("phase_features", False):
+        phase = _compute_phase_features(features, seq_lens_np)
+        features = np.concatenate([features, phase], axis=-1)
         D = features.shape[-1]
 
     seq_lens = torch.tensor(dataset["seq_lengths"], dtype=torch.long, device=device)

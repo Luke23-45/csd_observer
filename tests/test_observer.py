@@ -297,6 +297,24 @@ def test_tensorize_augmented_features() -> None:
     assert tensors.masks.shape == (2, 30, 5)
 
 
+def test_tensorize_phase_features() -> None:
+    from csd_observer.training.trainer import tensorize
+
+    dataset = {
+        "features": np.random.randn(2, 30, 1).astype(np.float32),
+        "seq_lengths": np.array([30, 24], dtype=np.int64),
+        "bifurcation_times": np.array([20.0, 18.0], dtype=np.float32),
+        "is_positive": np.array([True, True], dtype=np.bool_),
+        "split_indices": {"train": np.array([0]), "val": np.array([1]), "test": np.array([0, 1])},
+        "augment_features": True,
+        "phase_features": True,
+    }
+
+    tensors = tensorize(dataset, torch.device("cpu"))
+    assert tensors.features.shape == (2, 30, 9)
+    assert tensors.masks.shape == (2, 30, 9)
+
+
 def test_train_csd_observer() -> None:
     from csd_observer.config.load import load_config
     from csd_observer.data.bifurcation import build_dataset
