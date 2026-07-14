@@ -24,4 +24,4 @@ python studies/runner/benchmark.py chick_heart
 
 # Or clear cached data and re-run:
 rm -rf data/chick_heart/
-python studies/runner/benchmark.py chick_heart
+python studies/runner/benchmark.py chick_heart n_seeds=1

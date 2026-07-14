@@ -142,6 +142,7 @@ def _run_empirical_experiment(
         "bifurcation_times": bifurcation_times,
         "is_positive": is_positive,
         "split_indices": split_indices,
+        "augment_features": arrays_signal.get("augment_features", False)
     }
     
     tensors_merged = tensorize(merged_dataset, device)

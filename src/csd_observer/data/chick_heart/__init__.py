@@ -31,6 +31,7 @@ def build_benchmark_datasets(
             "bifurcation_times": combined["bifurcation_times"][global_idx],
             "is_positive": combined["is_positive"][global_idx],
             "split_indices": new_splits,
+            "augment_features": True,
         }
 
     arrays_signal = _subset(pos_idx)
