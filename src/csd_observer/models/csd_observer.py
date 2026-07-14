@@ -37,13 +37,14 @@ class CSDKalmanObserver(nn.Module):
                 parity_channel = input_dim - 1
             self.parity_channel = parity_channel
 
-            A_init = torch.eye(latent_dim) * 0.95
+            half = latent_dim // 2
+            A_init = torch.eye(half) * 0.95
             self.A_e = nn.Parameter(A_init.clone())
             self.A_o = nn.Parameter(A_init.clone())
-            self.C_e = nn.Parameter(torch.randn(input_dim, latent_dim).mul(0.1))
-            self.C_o = nn.Parameter(torch.randn(input_dim, latent_dim).mul(0.1))
-            self.K_e = nn.Parameter(torch.randn(latent_dim, input_dim).mul(0.1))
-            self.K_o = nn.Parameter(torch.randn(latent_dim, input_dim).mul(0.1))
+            self.C_e = nn.Parameter(torch.randn(input_dim, half).mul(0.1))
+            self.C_o = nn.Parameter(torch.randn(input_dim, half).mul(0.1))
+            self.K_e = nn.Parameter(torch.randn(half, input_dim).mul(0.1))
+            self.K_o = nn.Parameter(torch.randn(half, input_dim).mul(0.1))
             self.alternans_head = nn.Linear(1, 1)
             h_dim = max(latent_dim // 2, 2)
             self.head = nn.Sequential(
@@ -136,7 +137,8 @@ class CSDKalmanObserver(nn.Module):
 
         if self.parity_aware:
             half = d // 2
-            z = torch.zeros(B, d, device=device)
+            e_curr = torch.zeros(B, half, device=device)
+            o_curr = torch.zeros(B, half, device=device)
             logits = []
             alt_logits = []
             zs = []
@@ -147,22 +149,30 @@ class CSDKalmanObserver(nn.Module):
                     obs = obs * mask[:, t, :]
 
                 p = x[:, t, self.parity_channel]
-                is_even = (p >= 0).float().view(B, 1, 1)
+                is_even = p >= 0
 
-                A_t = is_even * self.A_e.unsqueeze(0) + (1 - is_even) * self.A_o.unsqueeze(0)
-                C_t = is_even * self.C_e.unsqueeze(0) + (1 - is_even) * self.C_o.unsqueeze(0)
-                K_t = is_even * self.K_e.unsqueeze(0) + (1 - is_even) * self.K_o.unsqueeze(0)
+                if is_even.any():
+                    idx = is_even.nonzero(as_tuple=True)[0]
+                    e_pred = e_curr[idx] @ self.A_e.T
+                    y_pred = e_pred @ self.C_e.T
+                    residual = obs[idx] - y_pred
+                    e_new = e_pred + residual @ self.K_e.T
+                    e_curr = e_curr.clone()
+                    e_curr[idx] = e_new
 
-                z_pred = torch.bmm(A_t, z.unsqueeze(-1)).squeeze(-1)
-                y_pred = torch.bmm(z_pred.unsqueeze(1), C_t.transpose(-1, -2)).squeeze(1)
-                residual = obs - y_pred
-                z = z_pred + torch.bmm(residual.unsqueeze(1), K_t.transpose(-1, -2)).squeeze(1)
+                if (~is_even).any():
+                    idx = (~is_even).nonzero(as_tuple=True)[0]
+                    o_pred = o_curr[idx] @ self.A_o.T
+                    y_pred = o_pred @ self.C_o.T
+                    residual = obs[idx] - y_pred
+                    o_new = o_pred + residual @ self.K_o.T
+                    o_curr = o_curr.clone()
+                    o_curr[idx] = o_new
 
+                z = torch.cat([e_curr, o_curr], dim=-1)
                 logits.append(self.head(z))
 
-                e_part = z[:, :half]
-                o_part = z[:, half:]
-                a_t = torch.norm(e_part - o_part, dim=-1, keepdim=True)
+                a_t = torch.norm(e_curr - o_curr, dim=-1, keepdim=True)
                 alt_logits.append(self.alternans_head(a_t))
 
                 zs.append(z)
