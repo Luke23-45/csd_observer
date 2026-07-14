@@ -26,11 +26,17 @@ class TensorizedDataset:
     is_positive: torch.Tensor
 
 
-def _compute_ews(features: np.ndarray, seq_lengths: np.ndarray, window_size: int = 30) -> Tuple[np.ndarray, np.ndarray]:
+def _compute_ews(
+    features: np.ndarray,
+    seq_lengths: np.ndarray,
+    window_size: int = 30,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     B, T, _ = features.shape
     W = min(window_size, T)
     csd = np.zeros((B, T), dtype=np.float32)
     rvar = np.zeros((B, T), dtype=np.float32)
+    lag2 = np.zeros((B, T), dtype=np.float32)
+    alternans = np.zeros((B, T), dtype=np.float32)
     for b in range(B):
         L = int(seq_lengths[b])
         seq = features[b, :, 0]
@@ -41,10 +47,21 @@ def _compute_ews(features: np.ndarray, seq_lengths: np.ndarray, window_size: int
             denom = np.sum(seg_c ** 2) + 1e-8
             csd[b, t] = num / denom
             rvar[b, t] = np.var(seg)
+            if len(seg) >= 4:
+                seg_lag2_a = seg[:-2] - seg[:-2].mean()
+                seg_lag2_b = seg[2:] - seg[2:].mean()
+                lag2[b, t] = np.sum(seg_lag2_a * seg_lag2_b) / (np.sum(seg_lag2_a ** 2) + 1e-8)
+                even = seg[::2]
+                odd = seg[1::2]
+                m = min(len(even), len(odd))
+                if m > 0:
+                    alternans[b, t] = float(np.mean(np.abs(even[:m] - odd[:m])))
         if W < L:
             csd[b, :W] = csd[b, W]
             rvar[b, :W] = rvar[b, W]
-    return csd, rvar
+            lag2[b, :W] = lag2[b, W]
+            alternans[b, :W] = alternans[b, W]
+    return csd, rvar, lag2, alternans
 
 
 def tensorize(dataset: Dict, device: torch.device) -> TensorizedDataset:
@@ -53,11 +70,13 @@ def tensorize(dataset: Dict, device: torch.device) -> TensorizedDataset:
 
     if dataset.get("augment_features", False):
         seq_lens_np = dataset["seq_lengths"]
-        csd, rvar = _compute_ews(features, seq_lens_np, window_size=60)
+        csd, rvar, lag2, alternans = _compute_ews(features, seq_lens_np, window_size=60)
         features = np.concatenate([
             features,
             csd.reshape(B, T, 1),
             rvar.reshape(B, T, 1),
+            lag2.reshape(B, T, 1),
+            alternans.reshape(B, T, 1),
         ], axis=-1)
         D = features.shape[-1]
 

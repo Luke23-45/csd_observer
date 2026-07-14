@@ -45,14 +45,16 @@ from csd_observer.utils.metrics import (  # noqa: E402
     compute_early_warning_auc,
     compute_null_metrics,
     evaluate_raw_csd,
+    evaluate_raw_lag2,
     evaluate_raw_var,
     raw_csd_indicator,
+    raw_lag2_indicator,
     raw_var_indicator,
     select_threshold,
 )
 
 SYSTEMS = ("fold", "hopf", "logistic")
-METHODS = ("Raw-CSD", "RunningVar", "Kalman-BCE", "Kalman-LSTM", "Kalman-LSTM-Spec")
+METHODS = ("Raw-CSD", "RunningVar", "Lag2-CSD", "Kalman-BCE", "Kalman-LSTM", "Kalman-LSTM-Spec")
 _REAL_SYSTEMS: Dict[str, Callable] = {}
 
 
@@ -201,6 +203,20 @@ def _run_empirical_experiment(
     runs.append(RunResult(method="RunningVar", seed=0, metrics=var_metrics))
     writer.write_result_row({"system": system, "seed": 0, "method": "RunningVar", **var_metrics})
 
+    lag2_scores_test = raw_lag2_indicator(arrays_signal["features"], arrays_signal["seq_lengths"], 30)
+    lag2_scores_null_test = raw_lag2_indicator(arrays_null["features"], arrays_null["seq_lengths"], 30)
+    lag2_metrics = evaluate_raw_lag2(
+        lag2_scores_test,
+        arrays_signal["bifurcation_times"],
+        arrays_signal["is_positive"],
+        arrays_signal["seq_lengths"],
+        lag2_scores_null_test,
+        arrays_null["seq_lengths"],
+        threshold=0.5,
+    )
+    runs.append(RunResult(method="Lag2-CSD", seed=0, metrics=lag2_metrics))
+    writer.write_result_row({"system": system, "seed": 0, "method": "Lag2-CSD", **lag2_metrics})
+
     methods_list = [
         ("Kalman-BCE", "bce"),
         ("Kalman-LSTM", "lstm"),
@@ -340,6 +356,20 @@ def _run_synthetic_experiment(
     runs.append(RunResult(method="RunningVar", seed=0, metrics=var_metrics))
     writer.write_result_row({"system": system, "seed": 0, "method": "RunningVar", **var_metrics})
 
+    lag2_scores_test = raw_lag2_indicator(arrays_signal["features"][test_idx_s], arrays_signal["seq_lengths"][test_idx_s], 30)
+    lag2_scores_null_test = raw_lag2_indicator(arrays_null["features"][test_idx_n], arrays_null["seq_lengths"][test_idx_n], 30)
+    lag2_metrics = evaluate_raw_lag2(
+        lag2_scores_test,
+        arrays_signal["bifurcation_times"][test_idx_s],
+        arrays_signal["is_positive"][test_idx_s],
+        arrays_signal["seq_lengths"][test_idx_s],
+        lag2_scores_null_test,
+        arrays_null["seq_lengths"][test_idx_n],
+        threshold=0.5,
+    )
+    runs.append(RunResult(method="Lag2-CSD", seed=0, metrics=lag2_metrics))
+    writer.write_result_row({"system": system, "seed": 0, "method": "Lag2-CSD", **lag2_metrics})
+
     methods_list = [
         ("Kalman-BCE", "bce"),
         ("Kalman-LSTM", "lstm"),
@@ -425,22 +455,12 @@ def _verdict_system(agg: Dict[str, Dict[str, float]], system: str) -> Tuple[bool
     reasons.append(f"  EW-AUC gain (LSTM vs BCE):         {safe(ewa_gain)}")
     reasons.append(f"  FPR ratio (LSTM/BCE null):         {safe(fpr_lstm / max(fpr_bce, 1e-8))}")
 
-    passed_dt = np.isfinite(dt_lstm) and dt_lstm >= 15.0
-    
-    if system == "chick_heart":
-        passed_ewa = np.isfinite(ewa_lstm) and ewa_lstm >= 0.70
-    else:
-        passed_ewa = np.isfinite(ewa_gain) and ewa_gain >= 0.05
-        
+    passed_dt = np.isfinite(dt_gain) and dt_gain >= 15.0
+    passed_ewa = np.isfinite(ewa_gain) and ewa_gain >= 0.05
     passed_null = not (np.isfinite(fpr_lstm) and np.isfinite(fpr_bce) and fpr_lstm > 1.5 * fpr_bce + 0.05)
 
-    reasons.append(f"  DT PASS: LSTM DT={safe(dt_lstm)} >= 15.0" if passed_dt else f"  DT FAIL: LSTM DT={safe(dt_lstm)} < 15.0")
-    
-    if system == "chick_heart":
-        reasons.append(f"  EW-AUC PASS: LSTM AUC={safe(ewa_lstm)} >= 0.70" if passed_ewa else f"  EW-AUC FAIL: LSTM AUC={safe(ewa_lstm)} < 0.70")
-    else:
-        reasons.append(f"  EW-AUC PASS: gain={safe(ewa_gain)} >= 0.05" if passed_ewa else f"  EW-AUC FAIL: gain={safe(ewa_gain)}")
-        
+    reasons.append(f"  DT PASS: gain={safe(dt_gain)} >= 15.0" if passed_dt else f"  DT FAIL: gain={safe(dt_gain)} < 15.0")
+    reasons.append(f"  EW-AUC PASS: gain={safe(ewa_gain)} >= 0.05" if passed_ewa else f"  EW-AUC FAIL: gain={safe(ewa_gain)}")
     reasons.append(f"  NULL PASS: FPR ratio={safe(fpr_lstm / max(fpr_bce, 1e-8))}" if passed_null else f"  NULL FAIL: FPR ratio={safe(fpr_lstm / max(fpr_bce, 1e-8))}")
 
     return passed_dt and passed_ewa and passed_null, "\n".join(reasons)

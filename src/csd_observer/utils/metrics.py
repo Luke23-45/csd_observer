@@ -26,6 +26,27 @@ def raw_csd_indicator(features: np.ndarray, seq_lengths: np.ndarray, window_size
     return scores
 
 
+def raw_lag2_indicator(features: np.ndarray, seq_lengths: np.ndarray, window_size: int = 30) -> np.ndarray:
+    B, T, C = features.shape
+    W = min(window_size, T)
+    scores = np.zeros((B, T), dtype=np.float32)
+    for b in range(B):
+        L = int(seq_lengths[b])
+        for c in range(C):
+            seq = features[b, :, c]
+            for t in range(W, L):
+                seg = seq[t - W : t]
+                if len(seg) < 4:
+                    continue
+                seg_a = seg[:-2] - seg[:-2].mean()
+                seg_b = seg[2:] - seg[2:].mean()
+                num = np.sum(seg_a * seg_b)
+                denom = np.sum(seg_a ** 2) + 1e-8
+                rho2 = num / denom
+                scores[b, t] = max(scores[b, t], rho2)
+    return scores
+
+
 def compute_bootstrap_ci(scores: np.ndarray, labels: np.ndarray, n_bootstrap: int = 1000) -> Dict[str, float]:
     if len(set(labels)) < 2:
         return {"mean": float("nan"), "std": float("nan"), "ci95_low": float("nan"), "ci95_high": float("nan")}
@@ -126,6 +147,48 @@ def evaluate_raw_csd(
             ep_end = max(0, int(T - early_end_delta))
             if ep_end > ep_start:
                 early_probs.append(float(np.max(csd_scores_null[i, ep_start:ep_end])))
+                early_labels.append(0)
+
+    dt = float(np.mean(detection_times)) if detection_times else float("nan")
+    ewa = float(roc_auc_score(early_labels, early_probs)) if len(set(early_labels)) >= 2 else float("nan")
+    return {"detection_time": dt, "ew_auc": ewa}
+
+
+def evaluate_raw_lag2(
+    lag2_scores_signal: np.ndarray,
+    bif_times_signal: np.ndarray,
+    is_pos_signal: np.ndarray,
+    seq_lens_signal: np.ndarray,
+    lag2_scores_null: np.ndarray,
+    seq_lens_null: np.ndarray,
+    threshold: float = 0.5,
+    early_start_delta: float = 50.0,
+    early_end_delta: float = 5.0,
+) -> Dict[str, float]:
+    detection_times: List[float] = []
+    early_probs: List[float] = []
+    early_labels: List[int] = []
+
+    for i in range(len(lag2_scores_signal)):
+        tau = bif_times_signal[i]
+        T = int(seq_lens_signal[i])
+        if is_pos_signal[i] and tau > 0:
+            alert_idx = np.where(lag2_scores_signal[i, :int(tau)] >= threshold)[0]
+            if len(alert_idx) > 0:
+                detection_times.append(tau - alert_idx[0])
+            ep_start = max(0, int(tau - early_start_delta))
+            ep_end = max(0, int(tau - early_end_delta))
+            if ep_end > ep_start:
+                early_probs.append(float(np.max(lag2_scores_signal[i, ep_start:ep_end])))
+                early_labels.append(1)
+
+    for i in range(len(lag2_scores_null)):
+        T = int(seq_lens_null[i])
+        if T > 0:
+            ep_start = max(0, int(T - early_start_delta))
+            ep_end = max(0, int(T - early_end_delta))
+            if ep_end > ep_start:
+                early_probs.append(float(np.max(lag2_scores_null[i, ep_start:ep_end])))
                 early_labels.append(0)
 
     dt = float(np.mean(detection_times)) if detection_times else float("nan")

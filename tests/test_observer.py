@@ -174,6 +174,7 @@ def test_metrics_functions() -> None:
         compute_detection_time,
         compute_false_positive_rate,
         raw_csd_indicator,
+        raw_lag2_indicator,
     )
     B, T, C = 4, 50, 1
     probs = np.random.rand(B, T).astype(np.float32)
@@ -190,6 +191,8 @@ def test_metrics_functions() -> None:
     features = np.random.randn(B, T, C).astype(np.float32)
     scores = raw_csd_indicator(features, seq_lens, window_size=10)
     assert scores.shape == (B, T)
+    scores_lag2 = raw_lag2_indicator(features, seq_lens, window_size=10)
+    assert scores_lag2.shape == (B, T)
 
 
 def test_select_threshold_returns_float() -> None:
@@ -234,7 +237,7 @@ def test_early_warning_auc_both_classes() -> None:
 
 
 def test_evaluate_raw_csd() -> None:
-    from csd_observer.utils.metrics import evaluate_raw_csd
+    from csd_observer.utils.metrics import evaluate_raw_csd, evaluate_raw_lag2
     B, T = 10, 100
     scores = np.random.rand(B, T).astype(np.float32)
     bif_times = np.full(B, 60.0, dtype=np.float32)
@@ -245,6 +248,10 @@ def test_evaluate_raw_csd() -> None:
     metrics = evaluate_raw_csd(scores, bif_times, is_pos, seq_lens, scores_null, seq_lens, threshold=0.5)
     assert "detection_time" in metrics
     assert "ew_auc" in metrics
+
+    metrics_lag2 = evaluate_raw_lag2(scores, bif_times, is_pos, seq_lens, scores_null, seq_lens, threshold=0.5)
+    assert "detection_time" in metrics_lag2
+    assert "ew_auc" in metrics_lag2
 
 
 def test_compute_null_metrics() -> None:
@@ -267,6 +274,23 @@ def test_tensorize() -> None:
     assert tensors.seq_lengths.shape == (10,)
     assert tensors.bifurcation_times.shape == (10,)
     assert tensors.is_positive.shape == (10,)
+
+
+def test_tensorize_augmented_features() -> None:
+    from csd_observer.training.trainer import tensorize
+
+    dataset = {
+        "features": np.random.randn(2, 30, 1).astype(np.float32),
+        "seq_lengths": np.array([30, 24], dtype=np.int64),
+        "bifurcation_times": np.array([20.0, 18.0], dtype=np.float32),
+        "is_positive": np.array([True, True], dtype=np.bool_),
+        "split_indices": {"train": np.array([0]), "val": np.array([1]), "test": np.array([0, 1])},
+        "augment_features": True,
+    }
+
+    tensors = tensorize(dataset, torch.device("cpu"))
+    assert tensors.features.shape == (2, 30, 5)
+    assert tensors.masks.shape == (2, 30, 5)
 
 
 def test_train_csd_observer() -> None:
