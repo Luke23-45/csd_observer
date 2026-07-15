@@ -67,7 +67,6 @@ METHODS = (
     "Kalman-Lag2-Net",
     "Kalman-ACKO",
     "Kalman-LSTM-Aug",
-    "Kalman-BCE-Spec",
 )
 
 
@@ -222,7 +221,6 @@ def _run_synthetic_experiment(
         ("Kalman-LSTM", "lstm"),
         ("Kalman-LSTM-Spec", "lstm_spec"),
         ("Kalman-ACKO", "parity"),
-        ("Kalman-BCE-Spec", "bce_spec"),
     ]
     methods_list = [(n, lt) for n, lt in methods_list if _enabled(n)]
     total = len(seeds) * len(methods_list)
