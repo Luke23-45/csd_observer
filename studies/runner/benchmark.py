@@ -147,6 +147,7 @@ def _run_synthetic_experiment(
     val_idx_s = arrays_signal["split_indices"]["val"]
     test_idx_s = arrays_signal["split_indices"]["test"]
     test_idx_n = arrays_null["split_indices"]["test"]
+    val_idx_n = arrays_null["split_indices"]["val"]
 
     n_seeds = data_cfg.get("n_seeds", 5)
     seed_offset = data_cfg.get("seed_offset", 0)
@@ -236,12 +237,15 @@ def _run_synthetic_experiment(
             probs_test = build_probs(model, tensors_signal, test_idx_s)
             probs_null = build_probs(model, tensors_null, test_idx_n)
             probs_val = build_probs(model, tensors_signal, val_idx_s)
+            probs_val_n = build_probs(model, tensors_null, val_idx_n)
 
             thresh = select_threshold(
                 probs_val,
                 arrays_signal["bifurcation_times"][val_idx_s],
                 arrays_signal["is_positive"][val_idx_s],
                 arrays_signal["seq_lengths"][val_idx_s],
+                null_probs=probs_val_n,
+                null_seq_lengths=arrays_null["seq_lengths"][val_idx_n],
             )
 
             dt = compute_detection_time(
@@ -284,12 +288,15 @@ def _run_synthetic_experiment(
             probs_test_aug = build_probs(model_aug, tensors_signal_aug, test_idx_s)
             probs_null_aug = build_probs(model_aug, tensors_null_aug, test_idx_n)
             probs_val_aug = build_probs(model_aug, tensors_signal_aug, val_idx_s)
+            probs_val_n_aug = build_probs(model_aug, tensors_null_aug, val_idx_n)
 
             thresh_aug = select_threshold(
                 probs_val_aug,
                 arrays_signal["bifurcation_times"][val_idx_s],
                 arrays_signal["is_positive"][val_idx_s],
                 arrays_signal["seq_lengths"][val_idx_s],
+                null_probs=probs_val_n_aug,
+                null_seq_lengths=arrays_null["seq_lengths"][val_idx_n],
             )
 
             dt_aug = compute_detection_time(
@@ -319,10 +326,10 @@ def _run_synthetic_experiment(
 
     if _enabled("Kalman-Lag2"):
         sig_val_len = len(val_idx_s)
-        lag2_val_all = np.concatenate([lag2_det_sig[val_idx_s], lag2_det_null], axis=0)
-        bif_val_all = np.concatenate([arrays_signal["bifurcation_times"][val_idx_s], arrays_null["bifurcation_times"]], axis=0)
-        is_pos_val_all = np.concatenate([np.ones(sig_val_len, dtype=bool), np.zeros(len(lag2_det_null), dtype=bool)], axis=0)
-        seq_lens_val_all = np.concatenate([arrays_signal["seq_lengths"][val_idx_s], arrays_null["seq_lengths"]], axis=0)
+        lag2_val_all = np.concatenate([lag2_det_sig[val_idx_s], lag2_det_null[val_idx_n]], axis=0)
+        bif_val_all = np.concatenate([arrays_signal["bifurcation_times"][val_idx_s], arrays_null["bifurcation_times"][val_idx_n]], axis=0)
+        is_pos_val_all = np.concatenate([np.ones(sig_val_len, dtype=bool), np.zeros(len(val_idx_n), dtype=bool)], axis=0)
+        seq_lens_val_all = np.concatenate([arrays_signal["seq_lengths"][val_idx_s], arrays_null["seq_lengths"][val_idx_n]], axis=0)
 
         best_q_kl2 = grid_search_q(lag2_val_all, bif_val_all, is_pos_val_all, seq_lens_val_all, device=device)
 
@@ -332,18 +339,20 @@ def _run_synthetic_experiment(
             lag2_test_s_t = torch.from_numpy(lag2_det_sig[test_idx_s].astype(np.float32)).to(device)
             lag2_test_n_t = torch.from_numpy(lag2_det_null[test_idx_n].astype(np.float32)).to(device)
             lag2_val_s_t = torch.from_numpy(lag2_det_sig[val_idx_s].astype(np.float32)).to(device)
+            lag2_val_n_t = torch.from_numpy(lag2_det_null[val_idx_n].astype(np.float32)).to(device)
 
             mu_test_s_kl2 = torch.sigmoid(kalman_kl2(lag2_test_s_t)["mu_hat"]).cpu().numpy()
             mu_test_n_kl2 = torch.sigmoid(kalman_kl2(lag2_test_n_t)["mu_hat"]).cpu().numpy()
             mu_val_s_kl2 = torch.sigmoid(kalman_kl2(lag2_val_s_t)["mu_hat"]).cpu().numpy()
+            mu_val_n_kl2 = torch.sigmoid(kalman_kl2(lag2_val_n_t)["mu_hat"]).cpu().numpy()
 
         thresh_kl2 = select_threshold(
             mu_val_s_kl2,
             arrays_signal["bifurcation_times"][val_idx_s],
             arrays_signal["is_positive"][val_idx_s],
             arrays_signal["seq_lengths"][val_idx_s],
-            null_probs=mu_test_n_kl2,
-            null_seq_lengths=arrays_null["seq_lengths"][test_idx_n],
+            null_probs=mu_val_n_kl2,
+            null_seq_lengths=arrays_null["seq_lengths"][val_idx_n],
         )
 
         dt_kl2 = compute_detection_time(
@@ -368,10 +377,10 @@ def _run_synthetic_experiment(
     # --- Kalman-Lag2-Net (learned MLP head on top of Kalman) ---
     if _enabled("Kalman-Lag2-Net"):
         sig_val_len = len(val_idx_s)
-        lag2_val_all = np.concatenate([lag2_det_sig[val_idx_s], lag2_det_null], axis=0)
-        bif_val_all = np.concatenate([arrays_signal["bifurcation_times"][val_idx_s], arrays_null["bifurcation_times"]], axis=0)
-        is_pos_val_all = np.concatenate([np.ones(sig_val_len, dtype=bool), np.zeros(len(lag2_det_null), dtype=bool)], axis=0)
-        seq_lens_val_all = np.concatenate([arrays_signal["seq_lengths"][val_idx_s], arrays_null["seq_lengths"]], axis=0)
+        lag2_val_all = np.concatenate([lag2_det_sig[val_idx_s], lag2_det_null[val_idx_n]], axis=0)
+        bif_val_all = np.concatenate([arrays_signal["bifurcation_times"][val_idx_s], arrays_null["bifurcation_times"][val_idx_n]], axis=0)
+        is_pos_val_all = np.concatenate([np.ones(sig_val_len, dtype=bool), np.zeros(len(val_idx_n), dtype=bool)], axis=0)
+        seq_lens_val_all = np.concatenate([arrays_signal["seq_lengths"][val_idx_s], arrays_null["seq_lengths"][val_idx_n]], axis=0)
 
         best_q_kl2 = grid_search_q(lag2_val_all, bif_val_all, is_pos_val_all, seq_lens_val_all, device=device)
 
@@ -384,20 +393,21 @@ def _run_synthetic_experiment(
                 arrays_signal["is_positive"],
                 arrays_signal["seq_lengths"],
                 q=best_q_kl2, config=cfg_kl2, device=device,
-                lag2_null=lag2_det_null,
-                null_seq_lengths=arrays_null["seq_lengths"],
+                lag2_null=lag2_det_null[val_idx_n],
+                null_seq_lengths=arrays_null["seq_lengths"][val_idx_n],
             )
 
             probs_test_kl2 = build_probs_kalman_lag2(model_kl2, lag2_det_sig, test_idx_s)
             probs_null_kl2 = build_probs_kalman_lag2(model_kl2, lag2_det_null, test_idx_n)
             probs_val_kl2 = build_probs_kalman_lag2(model_kl2, lag2_det_sig, val_idx_s)
+            probs_val_n_kl2 = build_probs_kalman_lag2(model_kl2, lag2_det_null, val_idx_n)
 
             thresh_kl2 = select_threshold(
                 probs_val_kl2, arrays_signal["bifurcation_times"][val_idx_s],
                 arrays_signal["is_positive"][val_idx_s],
                 arrays_signal["seq_lengths"][val_idx_s],
-                null_probs=probs_null_kl2,
-                null_seq_lengths=arrays_null["seq_lengths"][test_idx_n],
+                null_probs=probs_val_n_kl2,
+                null_seq_lengths=arrays_null["seq_lengths"][val_idx_n],
             )
 
             dt_kl2 = compute_detection_time(
