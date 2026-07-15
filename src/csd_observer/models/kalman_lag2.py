@@ -122,11 +122,11 @@ def grid_search_q(
 class KalmanLag2MLPHead(nn.Module):
     """Tiny per-step MLP on [mu_hat, delta_hat, innovation, y] features.
 
-    Architecture: LayerNorm -> Linear(4->8) -> GELU -> Linear(8->1)
-    Total: 49 trainable parameters.
+    Architecture: LayerNorm -> Linear(4->4) -> GELU -> Linear(4->1)
+    Total: 25 trainable parameters.
     """
 
-    def __init__(self, input_dim: int = 4, hidden_dim: int = 8) -> None:
+    def __init__(self, input_dim: int = 4, hidden_dim: int = 4) -> None:
         super().__init__()
         self.net = nn.Sequential(
             nn.LayerNorm(input_dim, elementwise_affine=False),
@@ -143,13 +143,13 @@ class KalmanLag2Net(nn.Module):
     """Fixed classical Kalman smoother + learned MLP head.
 
     The Kalman filter matrices are fixed (no gradient flow).
-    Only the 49-parameter MLP head is trained via BCE loss.
+    Only the 25-parameter MLP head is trained via BCE loss.
     """
 
     def __init__(self, q: float = 1e-3, r: float = 1.0) -> None:
         super().__init__()
         self.kalman = ClassicalKalmanLag2(q=q, r=r)
-        self.head = KalmanLag2MLPHead(input_dim=4, hidden_dim=8)
+        self.head = KalmanLag2MLPHead(input_dim=4, hidden_dim=4)
 
     def forward(self, lag2_scores: torch.Tensor) -> torch.Tensor:
         kalman_out = self.kalman(lag2_scores)
