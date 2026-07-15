@@ -337,6 +337,8 @@ def _run_synthetic_experiment(
                 arrays_signal["is_positive"],
                 arrays_signal["seq_lengths"],
                 q=best_q_kl2, config=cfg_kl2, device=device,
+                lag2_null=lag2_det_null,
+                null_seq_lengths=arrays_null["seq_lengths"],
             )
 
             probs_test_kl2 = build_probs_kalman_lag2(model_kl2, lag2_det_sig, test_idx_s)

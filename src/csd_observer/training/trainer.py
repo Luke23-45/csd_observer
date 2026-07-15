@@ -357,8 +357,11 @@ def train_kalman_lag2(
     q: float,
     config: dict,
     device: torch.device,
+    lag2_null: np.ndarray | None = None,
+    null_seq_lengths: np.ndarray | None = None,
 ) -> KalmanLag2Net:
     from csd_observer.models.kalman_lag2 import KalmanLag2Net
+    from csd_observer.utils.metrics import compute_early_warning_auc as _ewa
 
     train_cfg = config.get("training", {})
     _seed_all(train_cfg.get("seed_override", 42))
@@ -386,8 +389,9 @@ def train_kalman_lag2(
         optimizer, T_max=epochs, eta_min=scheduler_eta_min,
     )
 
+    use_null_val = lag2_null is not None and null_seq_lengths is not None
     best_state = None
-    best_val_metric = float("inf")
+    best_val_metric = -float("inf") if use_null_val else float("inf")
     stale_epochs = 0
 
     for _ in range(epochs):
@@ -426,7 +430,22 @@ def train_kalman_lag2(
         with torch.no_grad():
             x_val_t = torch.from_numpy(lag2_val.astype(np.float32)).to(device)
             logits_val = model(x_val_t)
+            probs_val = torch.sigmoid(logits_val).cpu().numpy()
 
+        if use_null_val:
+            with torch.no_grad():
+                x_null_t = torch.from_numpy(lag2_null.astype(np.float32)).to(device)
+                probs_null_val = torch.sigmoid(model(x_null_t)).cpu().numpy()
+            sig_mask = bif_val > 0
+            if sig_mask.any():
+                val_metric = _ewa(
+                    probs_val[sig_mask], bif_val[sig_mask],
+                    np.ones(sig_mask.sum(), dtype=bool), lens_val[sig_mask],
+                    probs_null_val, null_seq_lengths,
+                )
+            else:
+                val_metric = float("nan")
+        else:
             targets_val = _make_targets(
                 torch.from_numpy(bif_val.astype(np.float32)).to(device),
                 torch.from_numpy(lens_val.astype(np.int64)).to(device),
@@ -436,14 +455,18 @@ def train_kalman_lag2(
                 torch.arange(max_length, device=device).unsqueeze(0)
                 < torch.from_numpy(lens_val.astype(np.int64)).to(device).unsqueeze(1)
             ).float()
-
             bce_val = torch.nn.functional.binary_cross_entropy_with_logits(
                 logits_val, targets_val, reduction="none",
             )
             val_metric = (bce_val * valid_mask_val).sum() / valid_mask_val.sum().clamp(min=1.0)
             val_metric = val_metric.item()
 
-        if np.isfinite(val_metric) and val_metric < best_val_metric - 1e-6:
+        if use_null_val:
+            improved = np.isfinite(val_metric) and val_metric > best_val_metric + 1e-4
+        else:
+            improved = np.isfinite(val_metric) and val_metric < best_val_metric - 1e-6
+
+        if improved:
             best_val_metric = val_metric
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
             stale_epochs = 0
