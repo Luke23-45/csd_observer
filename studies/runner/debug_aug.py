@@ -179,22 +179,17 @@ def run_config(system: str, config_overrides: dict, n_patients: int = 200, seed:
 
 def main():
     configs = [
-        ("Baseline (no aug)", {"feature_mask": []}),  # no aug features
-        ("Aug (all 4)", {"feature_mask": "all"}),
+        ("Baseline (no aug)", {"feature_mask": []}),
         ("Aug (csd only)", {"feature_mask": [0]}),
         ("Aug (rvar only)", {"feature_mask": [1]}),
         ("Aug (lag2 only)", {"feature_mask": [2]}),
         ("Aug (alternans only)", {"feature_mask": [3]}),
-        ("Aug (csd+lag2)", {"feature_mask": [0, 2]}),
-        ("Aug (csd+rvar)", {"feature_mask": [0, 1]}),
-        ("Aug (all, std)", {"feature_mask": "all", "standardize": True}),
-        ("Aug (lag2, std)", {"feature_mask": [2], "standardize": True}),
     ]
 
     n_patients = 200
     n_seeds = 2
 
-    for system in ("hopf",):
+    for system in ("fold", "logistic", "hopf"):
         print(f"\n{'=' * 80}")
         print(f"  System: {system.capitalize()} Bifurcation")
         print(f"{'=' * 80}")
