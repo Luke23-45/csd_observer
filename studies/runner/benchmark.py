@@ -15,6 +15,7 @@ Output:
 
 from __future__ import annotations
 
+import copy
 import sys
 import time
 from dataclasses import dataclass
@@ -33,11 +34,14 @@ for p in (str(_SRC), str(_ROOT)):
 
 from csd_observer.config.load import load_config  # noqa: E402
 from csd_observer.data.bifurcation import build_dataset  # noqa: E402
+from csd_observer.models.kalman_lag2 import ClassicalKalmanLag2, grid_search_q  # noqa: E402
 from csd_observer.training.trainer import (  # noqa: E402
     TensorizedDataset,
     build_probs,
+    build_probs_kalman_lag2,
     tensorize,
     train_kalman,
+    train_kalman_lag2,
 )
 from csd_observer.utils.io import OutputWriter  # noqa: E402
 from csd_observer.utils.metrics import (  # noqa: E402
@@ -49,6 +53,7 @@ from csd_observer.utils.metrics import (  # noqa: E402
     evaluate_raw_var,
     raw_csd_indicator,
     raw_lag2_indicator,
+    raw_lag2_indicator_detrended,
     raw_var_indicator,
     select_threshold,
 )
@@ -195,6 +200,21 @@ def _run_synthetic_experiment(
         runs.append(RunResult(method="Lag2-CSD", seed=0, metrics=lag2_metrics))
         writer.write_result_row({"system": system, "seed": 0, "method": "Lag2-CSD", **lag2_metrics})
 
+    if _enabled("Lag2-CSD-detrended"):
+        lag2_det_scores_test = raw_lag2_indicator_detrended(arrays_signal["features"][test_idx_s], arrays_signal["seq_lengths"][test_idx_s], 30)
+        lag2_det_scores_null_test = raw_lag2_indicator_detrended(arrays_null["features"][test_idx_n], arrays_null["seq_lengths"][test_idx_n], 30)
+        lag2_det_metrics = evaluate_raw_lag2(
+            lag2_det_scores_test,
+            arrays_signal["bifurcation_times"][test_idx_s],
+            arrays_signal["is_positive"][test_idx_s],
+            arrays_signal["seq_lengths"][test_idx_s],
+            lag2_det_scores_null_test,
+            arrays_null["seq_lengths"][test_idx_n],
+            threshold=0.5,
+        )
+        runs.append(RunResult(method="Lag2-CSD-detrended", seed=0, metrics=lag2_det_metrics))
+        writer.write_result_row({"system": system, "seed": 0, "method": "Lag2-CSD-detrended", **lag2_det_metrics})
+
     methods_list = [
         ("Kalman-BCE", "bce"),
         ("Kalman-LSTM", "lstm"),
@@ -245,6 +265,110 @@ def _run_synthetic_experiment(
             writer.write_result_row({"system": system, "seed": seed, "method": method_name, **metrics})
             pbar.update(1)
     pbar.close()
+
+    # --- Kalman-Lag2 (classical, non-learned) ---
+    lag2_det_sig = raw_lag2_indicator_detrended(arrays_signal["features"], arrays_signal["seq_lengths"], 30)
+    lag2_det_null = raw_lag2_indicator_detrended(arrays_null["features"], arrays_null["seq_lengths"], 30)
+
+    if _enabled("Kalman-Lag2"):
+        sig_val_len = len(val_idx_s)
+        lag2_val_all = np.concatenate([lag2_det_sig[val_idx_s], lag2_det_null], axis=0)
+        bif_val_all = np.concatenate([arrays_signal["bifurcation_times"][val_idx_s], arrays_null["bifurcation_times"]], axis=0)
+        is_pos_val_all = np.concatenate([np.ones(sig_val_len, dtype=bool), np.zeros(len(lag2_det_null), dtype=bool)], axis=0)
+        seq_lens_val_all = np.concatenate([arrays_signal["seq_lengths"][val_idx_s], arrays_null["seq_lengths"]], axis=0)
+
+        best_q_kl2 = grid_search_q(lag2_val_all, bif_val_all, is_pos_val_all, seq_lens_val_all, device=device)
+
+        kalman_kl2 = ClassicalKalmanLag2(q=best_q_kl2, r=1.0).to(device)
+        kalman_kl2.eval()
+        with torch.no_grad():
+            lag2_test_s_t = torch.from_numpy(lag2_det_sig[test_idx_s].astype(np.float32)).to(device)
+            lag2_test_n_t = torch.from_numpy(lag2_det_null[test_idx_n].astype(np.float32)).to(device)
+            lag2_val_s_t = torch.from_numpy(lag2_det_sig[val_idx_s].astype(np.float32)).to(device)
+
+            mu_test_s_kl2 = kalman_kl2(lag2_test_s_t)["mu_hat"].cpu().numpy()
+            mu_test_n_kl2 = kalman_kl2(lag2_test_n_t)["mu_hat"].cpu().numpy()
+            mu_val_s_kl2 = kalman_kl2(lag2_val_s_t)["mu_hat"].cpu().numpy()
+
+        thresh_kl2 = select_threshold(
+            mu_val_s_kl2,
+            arrays_signal["bifurcation_times"][val_idx_s],
+            arrays_signal["is_positive"][val_idx_s],
+            arrays_signal["seq_lengths"][val_idx_s],
+            null_probs=mu_test_n_kl2,
+            null_seq_lengths=arrays_null["seq_lengths"][test_idx_n],
+        )
+
+        dt_kl2 = compute_detection_time(
+            mu_test_s_kl2, arrays_signal["bifurcation_times"][test_idx_s],
+            arrays_signal["is_positive"][test_idx_s],
+            arrays_signal["seq_lengths"][test_idx_s], thresh_kl2,
+        )
+        ewa_kl2 = compute_early_warning_auc(
+            mu_test_s_kl2, arrays_signal["bifurcation_times"][test_idx_s],
+            arrays_signal["is_positive"][test_idx_s],
+            arrays_signal["seq_lengths"][test_idx_s],
+            mu_test_n_kl2, arrays_null["seq_lengths"][test_idx_n],
+        )
+        null_m_kl2 = compute_null_metrics(mu_test_n_kl2, thresh_kl2, arrays_null["seq_lengths"][test_idx_n])
+
+        kl2_metrics = {
+            "detection_time": dt_kl2, "ew_auc": ewa_kl2, "fpr": null_m_kl2.get("fpr", float("nan")),
+        }
+        runs.append(RunResult(method="Kalman-Lag2", seed=0, metrics=kl2_metrics))
+        writer.write_result_row({"system": system, "seed": 0, "method": "Kalman-Lag2", **kl2_metrics})
+
+    # --- Kalman-Lag2-Net (learned MLP head on top of Kalman) ---
+    if _enabled("Kalman-Lag2-Net"):
+        sig_val_len = len(val_idx_s)
+        lag2_val_all = np.concatenate([lag2_det_sig[val_idx_s], lag2_det_null], axis=0)
+        bif_val_all = np.concatenate([arrays_signal["bifurcation_times"][val_idx_s], arrays_null["bifurcation_times"]], axis=0)
+        is_pos_val_all = np.concatenate([np.ones(sig_val_len, dtype=bool), np.zeros(len(lag2_det_null), dtype=bool)], axis=0)
+        seq_lens_val_all = np.concatenate([arrays_signal["seq_lengths"][val_idx_s], arrays_null["seq_lengths"]], axis=0)
+
+        best_q_kl2 = grid_search_q(lag2_val_all, bif_val_all, is_pos_val_all, seq_lens_val_all, device=device)
+
+        for seed in seeds:
+            cfg_kl2 = copy.deepcopy(config)
+            cfg_kl2.setdefault("training", {})["seed_override"] = seed
+            model_kl2 = train_kalman_lag2(
+                lag2_det_sig, train_idx_s, val_idx_s,
+                arrays_signal["bifurcation_times"],
+                arrays_signal["is_positive"],
+                arrays_signal["seq_lengths"],
+                q=best_q_kl2, config=cfg_kl2, device=device,
+            )
+
+            probs_test_kl2 = build_probs_kalman_lag2(model_kl2, lag2_det_sig, test_idx_s)
+            probs_null_kl2 = build_probs_kalman_lag2(model_kl2, lag2_det_null, test_idx_n)
+            probs_val_kl2 = build_probs_kalman_lag2(model_kl2, lag2_det_sig, val_idx_s)
+
+            thresh_kl2 = select_threshold(
+                probs_val_kl2, arrays_signal["bifurcation_times"][val_idx_s],
+                arrays_signal["is_positive"][val_idx_s],
+                arrays_signal["seq_lengths"][val_idx_s],
+                null_probs=probs_null_kl2,
+                null_seq_lengths=arrays_null["seq_lengths"][test_idx_n],
+            )
+
+            dt_kl2 = compute_detection_time(
+                probs_test_kl2, arrays_signal["bifurcation_times"][test_idx_s],
+                arrays_signal["is_positive"][test_idx_s],
+                arrays_signal["seq_lengths"][test_idx_s], thresh_kl2,
+            )
+            ewa_kl2 = compute_early_warning_auc(
+                probs_test_kl2, arrays_signal["bifurcation_times"][test_idx_s],
+                arrays_signal["is_positive"][test_idx_s],
+                arrays_signal["seq_lengths"][test_idx_s],
+                probs_null_kl2, arrays_null["seq_lengths"][test_idx_n],
+            )
+            null_m_kl2 = compute_null_metrics(probs_null_kl2, thresh_kl2, arrays_null["seq_lengths"][test_idx_n])
+
+            kl2_metrics = {
+                "detection_time": dt_kl2, "ew_auc": ewa_kl2, "fpr": null_m_kl2.get("fpr", float("nan")),
+            }
+            runs.append(RunResult(method="Kalman-Lag2-Net", seed=seed, metrics=kl2_metrics))
+            writer.write_result_row({"system": system, "seed": seed, "method": "Kalman-Lag2-Net", **kl2_metrics})
 
     return SystemResult(system=system, runs=runs)
 

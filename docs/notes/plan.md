@@ -17,4 +17,8 @@ python studies/runner/benchmark.py low_data
 
 # Outputs in outputs/benchmark/<run_name>/<timestamp>/
 ```
+python studies/runner/benchmark.py default n_seeds=1 methods=Raw-CSD,RunningVar,Lag2-CSD
 
+python studies/runner/benchmark.py default n_seeds=1 methods=Lag2-CSD-detrended,Kalman-Lag2,Kalman-BCE
+
+python studies/runner/benchmark.py default n_seeds=1 methods=Kalman-LSTM,Kalman-LSTM-Spec,Kalman-Lag2-Net,Kalman-ACKO
