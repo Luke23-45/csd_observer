@@ -306,7 +306,7 @@ def _run_synthetic_experiment(
             null_met_aug = compute_null_metrics(probs_null_aug, thresh_aug, arrays_null["seq_lengths"][test_idx_n])
 
             aug_metrics = {
-                "detection_time": dt_aug, "ew_auc": ewa_aug, "fpr": null_met_aug.get("fpr", float("nan")),
+                "detection_time": dt_aug, "ew_auc": ewa_aug, **null_met_aug,
             }
             runs.append(RunResult(method="Kalman-LSTM-Aug", seed=seed, metrics=aug_metrics))
             writer.write_result_row({"system": system, "seed": seed, "method": "Kalman-LSTM-Aug", **aug_metrics})
@@ -360,7 +360,7 @@ def _run_synthetic_experiment(
         null_m_kl2 = compute_null_metrics(mu_test_n_kl2, thresh_kl2, arrays_null["seq_lengths"][test_idx_n])
 
         kl2_metrics = {
-            "detection_time": dt_kl2, "ew_auc": ewa_kl2, "fpr": null_m_kl2.get("fpr", float("nan")),
+            "detection_time": dt_kl2, "ew_auc": ewa_kl2, **null_m_kl2,
         }
         runs.append(RunResult(method="Kalman-Lag2", seed=0, metrics=kl2_metrics))
         writer.write_result_row({"system": system, "seed": 0, "method": "Kalman-Lag2", **kl2_metrics})
@@ -414,7 +414,7 @@ def _run_synthetic_experiment(
             null_m_kl2 = compute_null_metrics(probs_null_kl2, thresh_kl2, arrays_null["seq_lengths"][test_idx_n])
 
             kl2_metrics = {
-                "detection_time": dt_kl2, "ew_auc": ewa_kl2, "fpr": null_m_kl2.get("fpr", float("nan")),
+                "detection_time": dt_kl2, "ew_auc": ewa_kl2, **null_m_kl2,
             }
             runs.append(RunResult(method="Kalman-Lag2-Net", seed=seed, metrics=kl2_metrics))
             writer.write_result_row({"system": system, "seed": seed, "method": "Kalman-Lag2-Net", **kl2_metrics})
@@ -607,6 +607,7 @@ def _run_single(run_name: str, n_seeds_override: Optional[int] = None, enabled_m
 def main() -> None:
     run_names, n_seeds_override, methods_override = _parse_args()
     total_started = time.time()
+    failed_runs: List[str] = []
     for i, run_name in enumerate(run_names, 1):
         tag = f"[{i}/{len(run_names)}] " if len(run_names) > 1 else ""
         print(f"\n{tag}{'='*70}")
@@ -615,11 +616,18 @@ def main() -> None:
         try:
             _run_single(run_name, n_seeds_override, methods_override)
         except Exception as e:
+            import traceback
             print(f"\nERROR: {run_name} failed: {e}")
+            traceback.print_exc()
+            failed_runs.append(run_name)
             continue
     total_elapsed = time.time() - total_started
     print(f"\n{'='*70}")
+    if failed_runs:
+        print(f"WARNING: {len(failed_runs)} run(s) FAILED: {', '.join(failed_runs)}")
     print(f"All runs complete. Total time: {total_elapsed:.1f}s")
+    if failed_runs:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

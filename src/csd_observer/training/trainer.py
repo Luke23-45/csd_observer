@@ -135,6 +135,9 @@ def _make_targets(
     target = torch.exp(-(dist / sigma) ** 2)
     valid_tau = tau > 0
     target = target * valid_tau.float()
+    # Zero out null trajectories (bif_time beyond sequence length)
+    within_sequence = (tau <= max_length).float()
+    target = target * within_sequence
     is_before_bifurcation = (t <= tau).float()
     target = target * is_before_bifurcation
     valid_len = t < seq_lengths.unsqueeze(1).float()

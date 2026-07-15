@@ -100,13 +100,12 @@ def grid_search_q(
             out = kalman(y_val_t)
         scores = out["mu_hat"].cpu().numpy()
 
-        n_sig = int(is_pos_val.sum())
-        scores_sig = scores[:n_sig]
-        scores_null = scores[n_sig:]
-        bifs_sig = bifs_val[:n_sig]
-        is_pos_sig = is_pos_val[:n_sig]
-        lens_sig = seq_lens_val[:n_sig]
-        lens_null = seq_lens_val[n_sig:]
+        scores_sig = scores[is_pos_val]
+        scores_null = scores[~is_pos_val]
+        bifs_sig = bifs_val[is_pos_val]
+        is_pos_sig = is_pos_val[is_pos_val]
+        lens_sig = seq_lens_val[is_pos_val]
+        lens_null = seq_lens_val[~is_pos_val]
 
         auc = compute_early_warning_auc(
             scores_sig, bifs_sig, is_pos_sig, lens_sig,
