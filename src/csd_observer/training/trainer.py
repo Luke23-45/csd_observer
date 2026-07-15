@@ -386,10 +386,8 @@ def train_kalman_lag2(
         optimizer, T_max=epochs, eta_min=scheduler_eta_min,
     )
 
-    from csd_observer.utils.metrics import compute_early_warning_auc as _ewa
-
     best_state = None
-    best_val_metric = -float("inf")
+    best_val_metric = float("inf")
     stale_epochs = 0
 
     for _ in range(epochs):
@@ -428,20 +426,24 @@ def train_kalman_lag2(
         with torch.no_grad():
             x_val_t = torch.from_numpy(lag2_val.astype(np.float32)).to(device)
             logits_val = model(x_val_t)
-            probs_val = torch.sigmoid(logits_val).cpu().numpy()
 
-        sig_mask = is_positive[val_idx] & (bif_val > 0)
-        null_mask = ~is_positive[val_idx]
-        if sig_mask.any() and null_mask.any():
-            val_metric = _ewa(
-                probs_val[sig_mask], bif_val[sig_mask],
-                is_positive[val_idx][sig_mask], lens_val[sig_mask],
-                probs_val[null_mask], lens_val[null_mask],
+            targets_val = _make_targets(
+                torch.from_numpy(bif_val.astype(np.float32)).to(device),
+                torch.from_numpy(lens_val.astype(np.int64)).to(device),
+                device, max_length=max_length, sigma=target_sigma,
             )
-        else:
-            val_metric = float("nan")
+            valid_mask_val = (
+                torch.arange(max_length, device=device).unsqueeze(0)
+                < torch.from_numpy(lens_val.astype(np.int64)).to(device).unsqueeze(1)
+            ).float()
 
-        if np.isfinite(val_metric) and val_metric > best_val_metric + 1e-4:
+            bce_val = torch.nn.functional.binary_cross_entropy_with_logits(
+                logits_val, targets_val, reduction="none",
+            )
+            val_metric = (bce_val * valid_mask_val).sum() / valid_mask_val.sum().clamp(min=1.0)
+            val_metric = val_metric.item()
+
+        if np.isfinite(val_metric) and val_metric < best_val_metric - 1e-6:
             best_val_metric = val_metric
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
             stale_epochs = 0

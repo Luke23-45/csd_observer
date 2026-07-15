@@ -286,9 +286,9 @@ def _run_synthetic_experiment(
             lag2_test_n_t = torch.from_numpy(lag2_det_null[test_idx_n].astype(np.float32)).to(device)
             lag2_val_s_t = torch.from_numpy(lag2_det_sig[val_idx_s].astype(np.float32)).to(device)
 
-            mu_test_s_kl2 = kalman_kl2(lag2_test_s_t)["mu_hat"].cpu().numpy()
-            mu_test_n_kl2 = kalman_kl2(lag2_test_n_t)["mu_hat"].cpu().numpy()
-            mu_val_s_kl2 = kalman_kl2(lag2_val_s_t)["mu_hat"].cpu().numpy()
+            mu_test_s_kl2 = torch.sigmoid(kalman_kl2(lag2_test_s_t)["mu_hat"]).cpu().numpy()
+            mu_test_n_kl2 = torch.sigmoid(kalman_kl2(lag2_test_n_t)["mu_hat"]).cpu().numpy()
+            mu_val_s_kl2 = torch.sigmoid(kalman_kl2(lag2_val_s_t)["mu_hat"]).cpu().numpy()
 
         thresh_kl2 = select_threshold(
             mu_val_s_kl2,

@@ -3,6 +3,6 @@ batch_size: 64
 lr: 0.001
 weight_decay: 0.00001
 patience: 5
-spectral_radius_weight: 0.1
+spectral_radius_weight: 0.01
 spectral_threshold: 0.95
 scheduler_eta_min: 0.000001
