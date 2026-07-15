@@ -194,15 +194,33 @@ The trade-off is **inherent**: different systems need different null ratios.
 | **H3** | Use single EWS features | rvar/alternans great on Hopf, but ALL features hurt Fold/Logistic | ❌ |
 | **H4** | Train with null data | FPR improves on all systems but AUC degrades; no ratio works universally | ❌ |
 
-## Part 5: Final Verdict
+## Part 5: New Method — Kalman-BCE-Spec
 
-**No learned method beats Kalman-BCE convincingly across all 3 synthetic systems.** The best candidate (Kalman-LSTM-Spec) wins on Hopf (DT +55.8, AUC +0.169) but loses on Fold (AUC −0.134, FPR 13× worse) and ties on Logistic.
+### 5.1 Motivation
 
-Adding EWS features or null training improves some metrics on some systems but always degrades others. The trade-offs are fundamental to the biophysics of each bifurcation type.
+The core trade-off: LSTM head overfits on Fold (476 params vs BCE's 37), but spectral loss helps Hopf. Combine BCE head (simple, great on Fold) with spectral loss (great on Hopf).
 
-### Recommendations
+**Kalman-BCE-Spec** = BCE head (53 params, no LSTM) + `SpectralRadiusLoss(weight=0.01, threshold=0.95)`.
 
-1. **Report honestly**: Simple lag-2 methods are competitive with learned Kalman observers on synthetic data. This is a meaningful negative result.
-2. **Highlight Hopf**: Kalman-LSTM-Spec with tuned spectral weight (0.01) achieves AUC=0.992, DT=33.5 on Hopf — a clear positive result.
-3. **Ensemble for production**: Use different methods per bifurcation type if system identification is available.
-4. **Logistic threshold**: The perfect AUC (1.000) but nan DT across all learned methods suggests threshold calibration, not feature quality, is the issue for map-based bifurcations. |
+The spectral loss operates on the Kalman filter matrices (A, K, C) which exist in ALL methods — not just LSTM. Adding it to BCE requires a 1-line config change (`loss_type="bce_spec"`).
+
+### 5.2 Hypothesis
+
+| System | BCE | LSTM-Spec | BCE-Spec (expected) |
+|--------|-----|-----------|---------------------|
+| **Fold** AUC | 0.923 | 0.789 | **0.923** (same as BCE) |
+| **Fold** FPR | 0.233 | 0.593 | **0.233** (same as BCE) |
+| **Hop** AUC | 0.823 | 0.992 | **0.95+** (spectral helps) |
+| **Hopf** DT | 89.3 | 33.5 | **~40** (spectral enables) |
+| **Logistic** | Same as BCE | Same as BCE | **Same as BCE** |
+
+### 5.3 Implementation (Committed)
+
+Commit `c11d299` — changes to `trainer.py` and `benchmark.py`.
+
+## Part 6: Next Step
+
+Run the benchmark:
+```
+python studies/runner/benchmark.py n_seeds=1
+```
