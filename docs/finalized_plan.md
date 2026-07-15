@@ -123,143 +123,86 @@ No single EWS feature helps across all 3 systems. The biophysical reason:
 
 ---
 
-## Part 3: Hypothesis H4 — Train with Null Data
+## Part 3: Hypothesis H4 — Train with Null Data (COMPLETED)
 
-### 3.1 Motivation
+### 3.1 Test Summary
 
-The core problem: LSTM-Spec produces elevated scores on null data (FPR 0.093 on Hopf, 0.593 on Fold). Currently, the model never sees null trajectories during training — it only knows what signal looks like, not what null looks like.
+**Script:** `studies/runner/debug_nulltrain.py`  
+**Base method:** Kalman-LSTM-Spec (no augmentation)  
+**Approach:** Combine signal + null trajectories in training set. Null trajectories assigned `bif_time=VERY_LARGE` and `is_positive=False`, producing all-zero BCE targets.
 
-Training with null data (`target=0`, `bifurcation_time=INF`) should teach the observer to suppress scores on noise, reducing FPR without sacrificing detection performance.
+### 3.2 Ratio Sweep on Hopf
 
-### 3.2 Plan
+**Setup:** n_patients=200, n_seeds=2, null_ratio ∈ {0.05, 0.10, 0.20, 0.50, 1.00}.
 
-1. **Modify `train_kalman`** (or create a wrapper) to accept an optional `null_tensors` parameter
-2. Create a combined training set: `signal_train ∪ null_train`
-   - Signal trajectories: `is_positive=True`, actual `bifurcation_times`
-   - Null trajectories: `is_positive=False`, `bifurcation_times = T+1` (beyond sequence length, so no "pre-bifurcation" label ever assigned)
-3. During each epoch, batches are drawn from the combined set (ratio 1:1 signal:null or weighted)
-4. Validation is unchanged (signal val + null val for EW-AUC)
-5. Evaluate on the same test splits
+| Ratio | DT (seed 0) | AUC (seed 0) | FPR (seed 0) | DT (seed 1) | Outcome |
+|-------|-------------|-------------|-------------|-------------|---------|
+| 0.00 (baseline) | 100.0 | 0.853 | 0.493 | nan | Reference |
+| 0.05 | 100.0 | 0.846 | 0.486 | nan | Too few null → no effect |
+| 0.10 | 100.0 | 0.826 | 0.381 | nan | Modest FPR improvement |
+| 0.20 | 100.0 | 0.802 | 0.233 | nan | Good FPR, DT preserved |
+| **0.50** | **100.0** | **0.776** | **0.019** | nan | **FPR below BCE (0.061)!** |
+| 1.00 | nan | 0.783 | 0.000 | nan | DT=nan — **detection killed** |
 
-### 3.3 Implementation Strategy
+**Key finding:** r=0.50 is the Hopf sweet spot. FPR drops from 0.493 → 0.019 (below BCE's 0.061!) while DT stays at 100.0. AUC drops from 0.853 → 0.776 (acceptable degradation).
 
-**Approach A (safe, separate function):**
-Create `train_kalman_with_null()` in `trainer.py` that:
-- Concatenates signal and null feature/mask tensors
-- Creates combined `bifurcation_times` tensor (null = T+1)
-- Creates combined `is_positive` tensor (null = False)
-- Calls the existing training loop with larger dataset
-- Returns the trained model
+### 3.3 Full System Evaluation at r=0.50
 
-**Approach B (simpler, inline):**
-Modify the benchmark's LSTM-Spec block to:
-1. Create a combined signal+null TensorizedDataset
-2. Pass all to `train_kalman` (it accepts `bifurcation_times` and `is_positive` for loss computation)
-3. The BCE loss and spectral loss naturally handle null trajectories (target=0 throughout)
+| System | Metric | Baseline | Null r=0.50 | Δ | vs BCE |
+|--------|--------|----------|-------------|---|--------|
+| **Fold** | DT | 118.6 | 111.3 | −7.4 | BCE=85.4, win by +25.9 |
+| | AUC | 0.805 | 0.738 | −0.067 | BCE=0.923, loss by −0.185 |
+| | FPR | 0.452 | 0.294 | **−0.158** | BCE=0.233, loss by +0.061 |
+| **Hopf** | DT | 100.0 | 100.0 | 0.0 | BCE=89.3, win by +10.7 |
+| | AUC | 0.715 | 0.687 | −0.028 | BCE=0.823, loss by −0.136 |
+| | FPR | 0.246 | **0.010** | **−0.237** | BCE=0.061, **WIN** |
+| **Logistic** | DT | 66.7 | 66.7 | 0.0 | BCE=nan, **WIN** |
+| | AUC | 1.000 | 1.000 | 0.0 | BCE=1.000, tie |
+| | FPR | 0.045 | 0.064 | +0.019 | BCE=0.050, loss by +0.014 |
 
-**Chosen: Approach A** — less invasive to existing code, easier to test independently.
+### 3.4 r=1.0 with Signal-Only Validation (Hypothesis Test)
 
-### 3.4 Test Script (H4)
+Hypothesis: null in validation set causes premature early stopping (artificially low BCE loss from easy null targets). Tested Hopf at r=1.0 with `val_include_null=False`.
 
-Create `studies/runner/debug_nulltrain.py`:
-- Uses LSTM-Spec (no augmentation) as base method
-- Trains once without null data, once with null data
-- Single system (Hopf — most FPR-sensitive)
-- Reports DT, EW-AUC, FPR for both configurations
-- Optional: sweep null:signal ratio (1:1, 2:1, 1:2)
+**Result:** ❌ Hypothesis disproven. Hopf DT=nan regardless of validation strategy. The null training at r=1.0 causes the model to converge to predicting all zeros for every trajectory, killing all detection. Signal-only validation cannot overcome this — the gradient from 50%+ null trajectories dominates the optimization.
 
-### 3.5 Expected Outcomes
+### 3.5 Conclusion: Null Training Trade-off is Fundamental
 
-| Scenario | Fold FPR | Hopf FPR | Logistic FPR | Overall |
-|----------|----------|----------|--------------|---------|
-| **Best case:** FPR drops to near BCE levels on Hopf/Logistic, DT and AUC preserved on Fold | ✅ | ✅ | ✅ | **Can beat BCE** |
-| **Mixed case:** FPR improves on Hopf/Logistic but Fold DT/AUC degrades | ❌ | ✅ | ✅ | Borderline |
-| **Worst case:** Null training kills detection (model learns to output low scores everywhere) | ❌ | ❌ | ❌ | Dead end |
-
-### 3.6 Contingency
-
-If H4 fails (null training degrades detection), the remaining options are:
-1. **Accept the result** — report honestly that no learned method beats BCE across all systems
-2. **Ensemble** — use Kalman-LSTM-Spec for Hopf, Kalman-BCE for Fold, Lag2-CSD for Logistic
-3. **Adaptive spectral threshold** — make spectral radius threshold learnable per system
-4. **Alternative architecture** — try Transformer or GRU head instead of LSTM
-
----
-
-## Part 4: Design of H4 Test Script
-
-### 4.1 Key Design Decisions
-
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Base method | LSTM-Spec (no aug) | Already best candidate; augmentation is dead end |
-| Null:signal ratio | 1:1 initially | Balanced; can sweep 0.5:1, 1:1, 2:1 |
-| Null target assignment | `bif_time=T+1, is_positive=False` | Ensures every time step is "before bifurcation" |
-| Batch sampling | Weighted random sampler | Ensure each batch has ~50% null trajectories |
-| Loss function | Same `lstm_spec` (BCE + SpectralRadius) | BCE on null targets=0 penalizes high null scores |
-| Validation | Signal val + null val EW-AUC | Same as current LSTM-Spec |
-| Threshold selection | Signal val only (H1 showed null data hurts) | Use same strategy as LSTM-Spec baseline |
-
-### 4.2 Implementation Detail: Combined Dataset
-
-```python
-# Pseudo-code
-def train_kalman_with_null(
-    tensors_signal, train_idx_s, val_idx_s,
-    tensors_null, train_idx_n, val_idx_n,
-    loss_type="lstm_spec", null_ratio=1.0, ...
-):
-    # Combined training set
-    train_idx = np.concatenate([train_idx_s, train_idx_n])
-    features = torch.cat([tensors_signal.features, tensors_null.features], dim=0)
-    masks = torch.cat([tensors_signal.masks, tensors_null.masks], dim=0)
-
-    # Null trajectories: bifurcation_time = T+1 (beyond sequence), is_positive = False
-    n_sig = len(tensors_signal.bifurcation_times)
-    n_null = len(tensors_null.bifurcation_times)
-    bif_times = torch.cat([
-        tensors_signal.bifurcation_times,
-        tensors_null.seq_lengths + 1,  # always beyond sequence
-    ])
-    is_pos = torch.cat([
-        tensors_signal.is_positive,
-        torch.zeros(n_null, dtype=torch.bool, device=device),
-    ])
-    seq_lens = torch.cat([tensors_signal.seq_lengths, tensors_null.seq_lengths])
-
-    combined = TensorizedDataset(features, masks, seq_lens, bif_times, is_pos)
-
-    # Weighted sampler for balanced batches
-    weights = np.ones(len(train_idx))
-    weights[train_idx_s] = null_ratio  # adjust signal weight to achieve desired ratio
-    sampler = WeightedRandomSampler(weights, len(train_idx), replacement=True)
-
-    return train_kalman(combined, train_idx, val_idx_s + val_idx_n,
-                        loss_type=loss_type, sampler=sampler, ...)
+```
+                r=0.50    r=1.00
+Fold FPR        0.294     0.087 ✅  (BCE=0.233)
+Hopf FPR         0.010 ✅  0.000 ✅  (BCE=0.061)
+Hopf DT         100.0 ✅    nan ❌
+Logistic FPR    0.064     0.005 ✅  (BCE=0.050)
 ```
 
-### 4.3 Metric Computation (Unchanged)
+The trade-off is **inherent**: different systems need different null ratios.
+- Hopf requires moderate null (r=0.50) to retain detection
+- Fold and Logistic benefit from aggressive null (r=1.00)
+- No single ratio works for all systems
 
-After training with combined dataset:
-- `build_probs(model, tensors_signal, test_idx_s)` → signal test probs (same as before)
-- `build_probs(model, tensors_null, test_idx_n)` → null test probs
-- `select_threshold(probs_val_signal, ...)` → threshold from signal val only
-- DT, EW-AUC, FPR computed identically to existing benchmark
-
-Metrics are computed on the SAME test splits as the baseline, ensuring fair comparison.
+**Overall: Null training does NOT enable beating BCE across all 3 systems.** The FPR improvement on some systems comes at the cost of AUC degradation or detection loss on others.
 
 ---
 
-## Part 5: Timeline
+## Part 4: Final Summary of All Hypotheses
 
-| Step | Description | Duration |
-|------|-------------|----------|
-| 1 | Implement `train_kalman_with_null()` in `trainer.py` | 15 min |
-| 2 | Write `debug_nulltrain.py` — compare ±null on Hopf | 10 min |
-| 3 | Run H4 test on Hopf, analyze results | 5 min |
-| 4 | If H4 works: extend to Fold + Logistic | 5 min |
-| 5 | If H4 works: update benchmark.py (replace Aug with Null-trained LSTM-Spec) | 10 min |
-| 6 | Full benchmark run + metrics | 20 min |
-| 7 | Update `benchmark_report.md` | 15 min |
-| 8 | ruff + pytest verification | 2 min |
-| | **Total (if H4 succeeds)** | **~82 min** |
+| Hypothesis | Idea | Result | Verdict |
+|-----------|------|--------|---------|
+| **H1** | Add null data to `select_threshold` | Threshold paradoxically drops → FPR increases | ❌ |
+| **H2** | Z-score standardize EWS features | Helps Hopf "all 4" (FPR 0.236→0.080) but individual features better | ⚠️ Partial |
+| **H3** | Use single EWS features | rvar/alternans great on Hopf, but ALL features hurt Fold/Logistic | ❌ |
+| **H4** | Train with null data | FPR improves on all systems but AUC degrades; no ratio works universally | ❌ |
+
+## Part 5: Final Verdict
+
+**No learned method beats Kalman-BCE convincingly across all 3 synthetic systems.** The best candidate (Kalman-LSTM-Spec) wins on Hopf (DT +55.8, AUC +0.169) but loses on Fold (AUC −0.134, FPR 13× worse) and ties on Logistic.
+
+Adding EWS features or null training improves some metrics on some systems but always degrades others. The trade-offs are fundamental to the biophysics of each bifurcation type.
+
+### Recommendations
+
+1. **Report honestly**: Simple lag-2 methods are competitive with learned Kalman observers on synthetic data. This is a meaningful negative result.
+2. **Highlight Hopf**: Kalman-LSTM-Spec with tuned spectral weight (0.01) achieves AUC=0.992, DT=33.5 on Hopf — a clear positive result.
+3. **Ensemble for production**: Use different methods per bifurcation type if system identification is available.
+4. **Logistic threshold**: The perfect AUC (1.000) but nan DT across all learned methods suggests threshold calibration, not feature quality, is the issue for map-based bifurcations. |
