@@ -62,12 +62,16 @@ def run_baseline(system: str, n_patients: int = 200, seed: int = 0):
     return {"dt": dt, "auc": auc, "fpr": fpr, "thresh": th}
 
 
-def run_null_trained(system: str, n_patients: int = 200, seed: int = 0, null_ratio: float = 1.0):
+def run_null_trained(system: str, n_patients: int = 200, seed: int = 0, null_ratio: float = 1.0, *, val_include_null: bool = True):
     """Null-trained LSTM-Spec — signal + null in training set.
 
     null_ratio controls how many null trajectories to include:
     null_ratio = 1.0 means equal null and signal trajectories.
     null_ratio = 0.5 means half as many null as signal.
+
+    val_include_null: if True, null trajectories are also used for validation
+    (BCE loss). If False, validation is signal-only, preventing early stopping
+    due to artificially low null loss.
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     config = load_config("default")
@@ -121,7 +125,10 @@ def run_null_trained(system: str, n_patients: int = 200, seed: int = 0, null_rat
     combined = TensorizedDataset(features, masks, seq_lengths, bif_times, is_positive)
 
     train_idx = np.concatenate([train_idx_s, train_idx_n + n_sig_total])
-    val_idx = np.concatenate([val_idx_s, val_idx_n + n_sig_total])
+    if val_include_null:
+        val_idx = np.concatenate([val_idx_s, val_idx_n + n_sig_total])
+    else:
+        val_idx = val_idx_s
 
     model = train_kalman(combined, train_idx, val_idx,
                          loss_type="lstm_spec", seed=seed, config=config, device=device)
@@ -145,49 +152,30 @@ def run_null_trained(system: str, n_patients: int = 200, seed: int = 0, null_rat
 def main():
     n_patients = 200
     n_seeds = 2
-    target_ratio = 0.50  # best ratio from Hopf sweep
 
-    for system in ("fold", "logistic", "hopf"):
-        print(f"\n{'=' * 90}")
-        print(f"  System: {system.capitalize()} — null_ratio={target_ratio}")
-        print(f"{'=' * 90}")
-
-        bl_results = {"dt": [], "auc": [], "fpr": []}
-        nt_results = {"dt": [], "auc": [], "fpr": []}
-
+    print(f"\n{'=' * 90}")
+    print(f"  Testing r=1.0 on Hopf: null-in-validation vs signal-only validation")
+    print(f"{'=' * 90}")
+    for system in ("hopf",):
         for seed in range(n_seeds):
-            print(f"\n  Seed {seed}: ")
             bl = run_baseline(system, n_patients=n_patients, seed=seed)
-            bl_results["dt"].append(bl["dt"])
-            bl_results["auc"].append(bl["auc"])
-            bl_results["fpr"].append(bl["fpr"])
-            print(f"    Baseline:     DT={bl['dt']:.1f} AUC={bl['auc']:.3f} FPR={bl['fpr']:.4f}")
+            nt_full = run_null_trained(system, n_patients=n_patients, seed=seed, null_ratio=1.0, val_include_null=True)
+            nt_sig_only = run_null_trained(system, n_patients=n_patients, seed=seed, null_ratio=1.0, val_include_null=False)
+            print(f"\n  Seed {seed}:")
+            print(f"    Baseline:                      DT={bl['dt']:.1f} AUC={bl['auc']:.3f} FPR={bl['fpr']:.4f}")
+            print(f"    r=1.0 + null in val:            DT={nt_full['dt']:.1f} AUC={nt_full['auc']:.3f} FPR={nt_full['fpr']:.4f}")
+            print(f"    r=1.0 + signal-only val:        DT={nt_sig_only['dt']:.1f} AUC={nt_sig_only['auc']:.3f} FPR={nt_sig_only['fpr']:.4f}")
 
-            nt = run_null_trained(system, n_patients=n_patients, seed=seed, null_ratio=target_ratio)
-            nt_results["dt"].append(nt["dt"])
-            nt_results["auc"].append(nt["auc"])
-            nt_results["fpr"].append(nt["fpr"])
-            print(f"    Null r={target_ratio:.2f}: DT={nt['dt']:.1f} AUC={nt['auc']:.3f} FPR={nt['fpr']:.4f}")
-
-        def _row(name, m):
-            dt_s = f"{np.nanmean(m['dt']):.1f}" if any(np.isfinite(m['dt'])) else "nan"
-            auc_s = f"{np.nanmean(m['auc']):.3f}" if any(np.isfinite(m['auc'])) else "nan"
-            fpr_s = f"{np.nanmean(m['fpr']):.4f}" if any(np.isfinite(m['fpr'])) else "nan"
-            return f"{name:<20s} {dt_s:>10s} {auc_s:>10s} {fpr_s:>10s}"
-
-        print(f"\n{'=' * 60}")
-        print(f"{'Config':<20s} {'DT':>10s} {'EW-AUC':>10s} {'FPR':>10s}")
-        print(f"{'-' * 60}")
-        print(_row("Baseline", bl_results))
-        print(_row(f"Null r={target_ratio:.2f}", nt_results))
-
-        bl_fpr = np.nanmean(bl_results["fpr"])
-        nt_fpr = np.nanmean(nt_results["fpr"])
-        bl_dt = np.nanmean(bl_results["dt"])
-        nt_dt = np.nanmean(nt_results["dt"])
-        bl_auc = np.nanmean(bl_results["auc"])
-        nt_auc = np.nanmean(nt_results["auc"])
-        print(f"\n  ΔDT={nt_dt - bl_dt:+.1f}  ΔAUC={nt_auc - bl_auc:+.3f}  ΔFPR={nt_fpr - bl_fpr:+.4f}")
+    print(f"\n\n{'=' * 90}")
+    print(f"  If above works: test r=1.0 (signal-only val) on all systems")
+    print(f"{'=' * 90}")
+    for system in ("fold", "logistic", "hopf"):
+        for seed in range(n_seeds):
+            bl = run_baseline(system, n_patients=n_patients, seed=seed)
+            nt = run_null_trained(system, n_patients=n_patients, seed=seed, null_ratio=1.0, val_include_null=False)
+            print(f"\n  {system} seed {seed}:")
+            print(f"    Baseline:          DT={bl['dt']:.1f} AUC={bl['auc']:.3f} FPR={bl['fpr']:.4f}")
+            print(f"    r=1.0 sig-val:     DT={nt['dt']:.1f} AUC={nt['auc']:.3f} FPR={nt['fpr']:.4f}")
 
 
 if __name__ == "__main__":
