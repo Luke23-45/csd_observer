@@ -66,6 +66,7 @@ METHODS = (
     "Kalman-LSTM", "Kalman-LSTM-Spec",
     "Kalman-Lag2-Net",
     "Kalman-ACKO",
+    "Kalman-LSTM-Aug",
 )
 
 
@@ -265,6 +266,52 @@ def _run_synthetic_experiment(
             writer.write_result_row({"system": system, "seed": seed, "method": method_name, **metrics})
             pbar.update(1)
     pbar.close()
+
+    # --- Kalman-LSTM-Aug (LSTM with augmented EWS features) ---
+    if _enabled("Kalman-LSTM-Aug"):
+        arrays_signal_aug = {**arrays_signal, "augment_features": True}
+        arrays_null_aug = {**arrays_null, "augment_features": True}
+        tensors_signal_aug = tensorize(arrays_signal_aug, device)
+        tensors_null_aug = tensorize(arrays_null_aug, device)
+        pbar_aug = tqdm(total=len(seeds), desc=f"{system} Kalman-LSTM-Aug", unit="run", leave=False)
+        for seed in seeds:
+            pbar_aug.set_description(f"{system} Kalman-LSTM-Aug")
+            model_aug = train_kalman(
+                tensors_signal_aug, train_idx_s, val_idx_s,
+                loss_type="lstm_spec", seed=seed, config=config, device=device,
+            )
+
+            probs_test_aug = build_probs(model_aug, tensors_signal_aug, test_idx_s)
+            probs_null_aug = build_probs(model_aug, tensors_null_aug, test_idx_n)
+            probs_val_aug = build_probs(model_aug, tensors_signal_aug, val_idx_s)
+
+            thresh_aug = select_threshold(
+                probs_val_aug,
+                arrays_signal["bifurcation_times"][val_idx_s],
+                arrays_signal["is_positive"][val_idx_s],
+                arrays_signal["seq_lengths"][val_idx_s],
+            )
+
+            dt_aug = compute_detection_time(
+                probs_test_aug, arrays_signal["bifurcation_times"][test_idx_s],
+                arrays_signal["is_positive"][test_idx_s],
+                arrays_signal["seq_lengths"][test_idx_s], thresh_aug,
+            )
+            ewa_aug = compute_early_warning_auc(
+                probs_test_aug, arrays_signal["bifurcation_times"][test_idx_s],
+                arrays_signal["is_positive"][test_idx_s],
+                arrays_signal["seq_lengths"][test_idx_s],
+                probs_null_aug, arrays_null["seq_lengths"][test_idx_n],
+            )
+            null_met_aug = compute_null_metrics(probs_null_aug, thresh_aug, arrays_null["seq_lengths"][test_idx_n])
+
+            aug_metrics = {
+                "detection_time": dt_aug, "ew_auc": ewa_aug, "fpr": null_met_aug.get("fpr", float("nan")),
+            }
+            runs.append(RunResult(method="Kalman-LSTM-Aug", seed=seed, metrics=aug_metrics))
+            writer.write_result_row({"system": system, "seed": seed, "method": "Kalman-LSTM-Aug", **aug_metrics})
+            pbar_aug.update(1)
+        pbar_aug.close()
 
     # --- Kalman-Lag2 (classical, non-learned) ---
     lag2_det_sig = raw_lag2_indicator_detrended(arrays_signal["features"], arrays_signal["seq_lengths"], 30)
