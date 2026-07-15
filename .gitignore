@@ -7,4 +7,3 @@ dist/
 .vscode/
 outputs/*
 !outputs/.gitkeep
-data/chick_heart/*

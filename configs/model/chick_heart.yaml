@@ -1,4 +1,0 @@
-latent_dim: 4
-lstm_dim: 8
-dropout: 0.2
-aux_dim: 2

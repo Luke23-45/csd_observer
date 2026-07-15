@@ -1,3 +1,3 @@
-from . import bifurcation, chick_heart
+from . import bifurcation
 
-__all__ = ["bifurcation", "chick_heart"]
+__all__ = ["bifurcation"]

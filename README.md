@@ -2,8 +2,6 @@
 
 Replaces the per-step MLP head of a Kalman filter with a causal LSTM head to detect temporal CSD patterns (rising autocorrelation, slowing recovery) that a static per-step head cannot see.
 
-The chick-heart benchmark is treated separately as a period-doubling / alternans problem, so it uses lag-2, alternans, and phase-aware feature augmentation, reports a `Lag2-CSD` baseline, and adds a `Kalman-LSTM-Aux` model that learns lag-2 / alternans auxiliaries.
-
 ## Requirements
 
 - Python >= 3.10
