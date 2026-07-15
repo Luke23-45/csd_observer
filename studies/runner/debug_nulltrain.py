@@ -145,57 +145,49 @@ def run_null_trained(system: str, n_patients: int = 200, seed: int = 0, null_rat
 def main():
     n_patients = 200
     n_seeds = 2
+    target_ratio = 0.50  # best ratio from Hopf sweep
 
-    # Sweep null ratios on Hopf (most sensitive to over-suppression)
-    ratios = [0.05, 0.1, 0.2, 0.5, 1.0]
-
-    for system in ("hopf",):
+    for system in ("fold", "logistic", "hopf"):
         print(f"\n{'=' * 90}")
-        print(f"  System: {system.capitalize()} — Null Ratio Sweep")
+        print(f"  System: {system.capitalize()} — null_ratio={target_ratio}")
         print(f"{'=' * 90}")
 
-        # Store results: {ratio: {seed: {dt, auc, fpr}}}
-        all_results = {}
-        for r in ratios:
-            all_results[r] = {"dt": [], "auc": [], "fpr": []}
+        bl_results = {"dt": [], "auc": [], "fpr": []}
+        nt_results = {"dt": [], "auc": [], "fpr": []}
 
         for seed in range(n_seeds):
-            print(f"\n  Seed {seed}:")
-            # Baseline
+            print(f"\n  Seed {seed}: ")
             bl = run_baseline(system, n_patients=n_patients, seed=seed)
-            print(f"    Baseline:          DT={bl['dt']:.1f} AUC={bl['auc']:.3f} FPR={bl['fpr']:.4f}")
+            bl_results["dt"].append(bl["dt"])
+            bl_results["auc"].append(bl["auc"])
+            bl_results["fpr"].append(bl["fpr"])
+            print(f"    Baseline:     DT={bl['dt']:.1f} AUC={bl['auc']:.3f} FPR={bl['fpr']:.4f}")
 
-            for r in ratios:
-                nt = run_null_trained(system, n_patients=n_patients, seed=seed, null_ratio=r)
-                all_results[r]["dt"].append(nt["dt"])
-                all_results[r]["auc"].append(nt["auc"])
-                all_results[r]["fpr"].append(nt["fpr"])
-                print(f"    null_ratio={r:.2f}:  DT={nt['dt']:.1f} AUC={nt['auc']:.3f} FPR={nt['fpr']:.4f} (n_null={nt.get('n_null_used','?')})")
+            nt = run_null_trained(system, n_patients=n_patients, seed=seed, null_ratio=target_ratio)
+            nt_results["dt"].append(nt["dt"])
+            nt_results["auc"].append(nt["auc"])
+            nt_results["fpr"].append(nt["fpr"])
+            print(f"    Null r={target_ratio:.2f}: DT={nt['dt']:.1f} AUC={nt['auc']:.3f} FPR={nt['fpr']:.4f}")
 
-        print(f"\n{'=' * 90}")
         def _row(name, m):
             dt_s = f"{np.nanmean(m['dt']):.1f}" if any(np.isfinite(m['dt'])) else "nan"
             auc_s = f"{np.nanmean(m['auc']):.3f}" if any(np.isfinite(m['auc'])) else "nan"
             fpr_s = f"{np.nanmean(m['fpr']):.4f}" if any(np.isfinite(m['fpr'])) else "nan"
             return f"{name:<20s} {dt_s:>10s} {auc_s:>10s} {fpr_s:>10s}"
 
+        print(f"\n{'=' * 60}")
         print(f"{'Config':<20s} {'DT':>10s} {'EW-AUC':>10s} {'FPR':>10s}")
         print(f"{'-' * 60}")
-        bl = run_baseline(system, n_patients=n_patients, seed=0)
-        print(_row("Baseline", {"dt": [bl["dt"]], "auc": [bl["auc"]], "fpr": [bl["fpr"]]}))
-        for r in ratios:
-            print(_row(f"Null r={r:.2f}", all_results[r]))
+        print(_row("Baseline", bl_results))
+        print(_row(f"Null r={target_ratio:.2f}", nt_results))
 
-    # Then full comparison at best ratio on all systems
-    print(f"\n\n{'=' * 90}")
-    print(f"  Full system comparison at null_ratio=0.10")
-    print(f"{'=' * 90}")
-    for system in ("hopf", "fold", "logistic"):
-        print(f"\n  --- {system.capitalize()} ---")
-        for seed in range(n_seeds):
-            bl = run_baseline(system, n_patients=n_patients, seed=seed)
-            nt = run_null_trained(system, n_patients=n_patients, seed=seed, null_ratio=0.10)
-            print(f"    Seed {seed}: BL DT={bl['dt']:.1f} AUC={bl['auc']:.3f} FPR={bl['fpr']:.4f} | NR DT={nt['dt']:.1f} AUC={nt['auc']:.3f} FPR={nt['fpr']:.4f}")
+        bl_fpr = np.nanmean(bl_results["fpr"])
+        nt_fpr = np.nanmean(nt_results["fpr"])
+        bl_dt = np.nanmean(bl_results["dt"])
+        nt_dt = np.nanmean(nt_results["dt"])
+        bl_auc = np.nanmean(bl_results["auc"])
+        nt_auc = np.nanmean(nt_results["auc"])
+        print(f"\n  ΔDT={nt_dt - bl_dt:+.1f}  ΔAUC={nt_auc - bl_auc:+.3f}  ΔFPR={nt_fpr - bl_fpr:+.4f}")
 
 
 if __name__ == "__main__":
