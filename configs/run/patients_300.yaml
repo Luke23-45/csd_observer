@@ -1,0 +1,7 @@
+_data: default
+_model: default
+_training: default
+data:
+  n_patients: 300
+training:
+  epochs: 50
