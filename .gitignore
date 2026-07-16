@@ -7,4 +7,7 @@ dist/
 .vscode/
 outputs/*
 !outputs/.gitkeep
-docs/publication_framing.md
+analysis/experiment_data/*
+analysis/visualize/outputs/*
+!analysis/visualize/outputs/.gitkeep
+legacy/

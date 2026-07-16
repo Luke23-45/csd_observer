@@ -1,0 +1,73 @@
+% Manuscript: Regime-Dependent Performance of Learned Kalman Observers
+%             for Early-Warning Detection
+%
+% After selecting a target journal, replace \documentclass{article} with
+% the journal template and remove placeholder settings that the template
+% replaces.
+
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{flafter}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+
+\graphicspath{{data/figures/}}
+
+\crefname{section}{Section}{Sections}
+\Crefname{section}{Section}{Sections}
+\crefname{subsection}{Section}{Sections}
+\Crefname{subsection}{Section}{Sections}
+\crefname{table}{Table}{Tables}
+\Crefname{table}{Table}{Tables}
+\crefname{figure}{Figure}{Figures}
+\Crefname{figure}{Figure}{Figures}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\title{Regime-Dependent Performance of Learned Kalman Observers \\ for Early-Warning Detection}
+
+\author{}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+% To be written after Results and Discussion are stable.
+\end{abstract}
+
+\input{sections/introduction/introduction}
+\input{sections/related_work/related_work}
+\input{sections/problem_setting/problem_setting}
+\input{sections/methods/methods}
+\input{sections/experimental_design/experimental_design}
+\input{sections/results/results}
+\input{sections/discussion/discussion}
+\input{sections/limitations/limitations}
+\input{sections/conclusion/conclusion}
+
+\appendix
+\input{appendix/appendix}
+
+\clearpage
+\bibliographystyle{plainnat}
+\bibliography{bib/references}
+
+\end{document}

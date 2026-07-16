@@ -1,0 +1,45 @@
+\section{Introduction}
+\label{sec:introduction}
+
+% Motivation: Critical transitions require early-warning detection because
+% late detection can miss the actionable pre-transition window.
+
+% Gap: Many early-warning methods are evaluated on isolated systems, but
+% different bifurcations produce different warning signatures.
+
+% A fold transition, a Hopf transition, and a logistic or period-doubling
+% transition should not be assumed to favor the same observer.
+
+% Learned observers are attractive because they can adapt score trajectories
+% from data, but their inductive biases may help one regime and hurt another.
+
+% This paper evaluates learned Kalman observer variants across multiple
+% dynamical regimes and patient-count settings.
+
+% Central finding: observer performance is regime- and metric-dependent.
+
+\subsection{Background and Motivation}
+\label{sec:background}
+
+% Early-warning detection, critical slowing down, and why observer-based
+% scoring is useful. Keep focused — not a full textbook.
+
+\subsection{Problem Gap}
+\label{sec:gap}
+
+% The missing question is not whether a learned observer can win on one
+% system, but whether the same observer behavior transfers across
+% qualitatively different bifurcation mechanisms.
+
+\subsection{Contributions}
+\label{sec:contributions}
+
+% Safe contribution bullets:
+% \begin{itemize}
+%   \item We formalize a benchmark across fold, Hopf, and logistic systems.
+%   \item We compare learned Kalman observer variants across patient-count settings.
+%   \item We evaluate detection time, early-warning AUC, and false-positive rate.
+%   \item We show that no single observer variant dominates all systems and metrics.
+%   \item We identify where spectral or recurrent observer structure is useful
+%         and where simpler observers remain competitive.
+% \end{itemize}

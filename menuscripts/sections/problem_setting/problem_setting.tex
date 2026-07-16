@@ -1,0 +1,66 @@
+\section{Problem Setting and Benchmark Definition}
+\label{sec:problem}
+
+% This section defines exactly what is being evaluated.
+% It is aligned with the formal definition in
+% \texttt{docs/definition/formal\_definition.md}.
+
+\subsection{Dynamical Systems}
+\label{sec:systems}
+
+% Three systems:
+% \begin{description}
+%   \item[Fold bifurcation]  -- describe transition mechanism and test-case value
+%   \item[Hopf bifurcation]  -- describe transition mechanism and test-case value
+%   \item[Logistic (period-doubling) bifurcation] -- describe transition mechanism
+%         and test-case value
+% \end{description}
+% For each system, state the qualitative transition mechanism and why it is a
+% distinct test case.
+
+\subsection{Trajectory Data and Patient Counts}
+\label{sec:data}
+
+% Patient counts: 100, 200, 300, 400, 500.
+% Seed order: 101, 202, 303, 404, 505, 606, 707, 808, 909, 1010.
+% Signal and null trajectories, train/validation/test split logic.
+
+\subsection{Batch Selection}
+\label{sec:batch}
+
+% Deterministic rule for selecting the most complete batch per patient count.
+% Prevents reviewers from thinking partial reruns were hand-selected.
+
+\subsection{Evaluation Metrics}
+\label{sec:metrics}
+
+% Detection time (Section~\ref{sec:metrics:dt}),
+% early-warning AUC (Section~\ref{sec:metrics:auc}),
+% false-positive rate (Section~\ref{sec:metrics:fpr}),
+% threshold selection (Section~\ref{sec:metrics:threshold}).
+% Use the formal definitions already finalized.
+
+\subsubsection{Detection Time}
+\label{sec:metrics:dt}
+
+% DT_i = tau_i - a_i where a_i = min{t < tau_i : p_{i,t} >= theta}.
+% Mean over trajectories with at least one pre-bifurcation alert.
+
+\subsubsection{Early-Warning AUC}
+\label{sec:metrics:auc}
+
+% e_i = max{p_{i,t} : max(0, tau_i - 50) <= t < tau_i - 5}
+% n_j = max{p_{j,t} : max(0, T_j - 50) <= t < T_j - 5}
+% ROC AUC from {e_i} and {n_j}.
+
+\subsubsection{False Positive Rate}
+\label{sec:metrics:fpr}
+
+% Per-time-step alert rate on null sequences.
+
+\subsubsection{Threshold Selection}
+\label{sec:metrics:threshold}
+
+% Validation-based threshold via Youden's J statistic with 0.80 sensitivity
+% guard. Positive window: [tau - 60, tau). Negative window:
+% [0, max(0, tau - 121)). Fallback 0.5 if only one class or constant scores.

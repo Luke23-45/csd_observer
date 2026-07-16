@@ -1,0 +1,41 @@
+\section{Methods}
+\label{sec:methods}
+
+% Describe the observer variants and training procedure clearly enough for
+% reproduction.
+
+\subsection{Learned Kalman Observer}
+\label{sec:methods:observer}
+
+% Observer model at the level needed for the paper:
+% - input trajectory
+% - latent observer state
+% - score sequence
+% - learned components
+% - output probability or warning score
+% Exact architecture settings go in the supplement.
+
+\subsection{Observer Variants}
+\label{sec:methods:variants}
+
+% Main reported variants:
+% \begin{description}
+%   \item[Kalman-BCE] -- strong learned baseline
+%   \item[Kalman-LSTM-Spec] -- proposed or focal spectral/recurrent variant
+% \end{description}
+% Describe why these two are the main comparison.
+
+\subsection{Training Objective and Calibration}
+\label{sec:methods:training}
+
+% Training loss, validation criterion, threshold selection, early stopping,
+% random seed handling. Keep calibration separate from test evaluation.
+
+\subsection{Implementation and Reproducibility}
+\label{sec:methods:implementation}
+
+% Where the code and generated artifacts live:
+% - model and training code
+% - benchmark runner
+% - experiment data directory
+% - visualization outputs
