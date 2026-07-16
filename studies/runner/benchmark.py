@@ -237,15 +237,11 @@ def _run_synthetic_experiment(
             probs_test = build_probs(model, tensors_signal, test_idx_s)
             probs_null = build_probs(model, tensors_null, test_idx_n)
             probs_val = build_probs(model, tensors_signal, val_idx_s)
-            probs_val_n = build_probs(model, tensors_null, val_idx_n)
-
             thresh = select_threshold(
                 probs_val,
                 arrays_signal["bifurcation_times"][val_idx_s],
                 arrays_signal["is_positive"][val_idx_s],
                 arrays_signal["seq_lengths"][val_idx_s],
-                null_probs=probs_val_n,
-                null_seq_lengths=arrays_null["seq_lengths"][val_idx_n],
             )
 
             dt = compute_detection_time(
@@ -288,15 +284,11 @@ def _run_synthetic_experiment(
             probs_test_aug = build_probs(model_aug, tensors_signal_aug, test_idx_s)
             probs_null_aug = build_probs(model_aug, tensors_null_aug, test_idx_n)
             probs_val_aug = build_probs(model_aug, tensors_signal_aug, val_idx_s)
-            probs_val_n_aug = build_probs(model_aug, tensors_null_aug, val_idx_n)
-
             thresh_aug = select_threshold(
                 probs_val_aug,
                 arrays_signal["bifurcation_times"][val_idx_s],
                 arrays_signal["is_positive"][val_idx_s],
                 arrays_signal["seq_lengths"][val_idx_s],
-                null_probs=probs_val_n_aug,
-                null_seq_lengths=arrays_null["seq_lengths"][val_idx_n],
             )
 
             dt_aug = compute_detection_time(
@@ -351,8 +343,6 @@ def _run_synthetic_experiment(
             arrays_signal["bifurcation_times"][val_idx_s],
             arrays_signal["is_positive"][val_idx_s],
             arrays_signal["seq_lengths"][val_idx_s],
-            null_probs=mu_val_n_kl2,
-            null_seq_lengths=arrays_null["seq_lengths"][val_idx_n],
         )
 
         dt_kl2 = compute_detection_time(
@@ -406,8 +396,6 @@ def _run_synthetic_experiment(
                 probs_val_kl2, arrays_signal["bifurcation_times"][val_idx_s],
                 arrays_signal["is_positive"][val_idx_s],
                 arrays_signal["seq_lengths"][val_idx_s],
-                null_probs=probs_val_n_kl2,
-                null_seq_lengths=arrays_null["seq_lengths"][val_idx_n],
             )
 
             dt_kl2 = compute_detection_time(
