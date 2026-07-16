@@ -7,3 +7,4 @@ dist/
 .vscode/
 outputs/*
 !outputs/.gitkeep
+docs/publication_framing.md

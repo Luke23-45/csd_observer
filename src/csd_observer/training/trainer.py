@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import numpy as np
 import torch
@@ -167,6 +167,7 @@ def train_kalman(
     config: dict,
     device: torch.device,
     val_arrays: Optional[dict] = None,
+    epoch_logger: Optional[List[Dict]] = None,
 ) -> CSDKalmanObserver:
     use_lstm = loss_type in ("lstm", "lstm_spec", "lstm_aux")
     use_spec = loss_type == "lstm_spec"
@@ -250,9 +251,11 @@ def train_kalman(
     stale_epochs = 0
     train_size = len(train_idx)
 
-    for _ in range(epochs):
+    for epoch_idx in range(epochs):
         model.train()
         order = torch.randperm(train_size, device=device)
+        epoch_loss_sum = 0.0
+        epoch_n_batches = 0
         for start in range(0, train_size, batch_size):
             batch_ids = order[start : start + batch_size]
             logits, zs, A, K, C, aux_logits = model(x_train[batch_ids], m_train[batch_ids])
@@ -279,6 +282,10 @@ def train_kalman(
 
             if use_spec and spec_loss_fn is not None:
                 loss = loss + spec_loss_fn(A, K, C)["loss"]
+
+            if epoch_logger is not None:
+                epoch_loss_sum += loss.detach().item()
+                epoch_n_batches += 1
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -326,6 +333,17 @@ def train_kalman(
                 val_metric = val_metric + spec_loss_fn(A_val, K_val, C_val)["loss"]
             val_metric = val_metric.item()
 
+        if epoch_logger is not None:
+            entry: Dict[str, Any] = {
+                "epoch": epoch_idx,
+                "train_loss": epoch_loss_sum / max(epoch_n_batches, 1),
+                "val_metric": float(val_metric) if np.isfinite(val_metric) else float("nan"),
+                "lr": scheduler.get_last_lr()[0],
+            }
+            if use_spec and spec_loss_fn is not None and A_val is not None:
+                entry["spectral_radius"] = float(spec_loss_fn(A_val, K_val, C_val)["spectral_radius"])
+            epoch_logger.append(entry)
+
         if np.isfinite(val_metric):
             if use_val_auc:
                 improved = val_metric > best_val_metric + 1e-4
@@ -362,6 +380,7 @@ def train_kalman_lag2(
     device: torch.device,
     lag2_null: np.ndarray | None = None,
     null_seq_lengths: np.ndarray | None = None,
+    epoch_logger: Optional[List[Dict]] = None,
 ) -> KalmanLag2Net:
     from csd_observer.models.kalman_lag2 import KalmanLag2Net
     from csd_observer.utils.metrics import compute_early_warning_auc as _ewa
@@ -397,9 +416,11 @@ def train_kalman_lag2(
     best_val_metric = -float("inf") if use_null_val else float("inf")
     stale_epochs = 0
 
-    for _ in range(epochs):
+    for epoch_idx in range(epochs):
         model.train()
         order = np.random.permutation(len(train_idx))
+        epoch_loss_sum = 0.0
+        epoch_n_batches = 0
         for start in range(0, len(train_idx), batch_size):
             batch_ids = order[start: start + batch_size]
             x_batch = torch.from_numpy(lag2_train[batch_ids].astype(np.float32)).to(device)
@@ -421,6 +442,10 @@ def train_kalman_lag2(
                 logits, targets, reduction="none",
             )
             loss = (bce * valid_mask).sum() / valid_mask.sum().clamp(min=1.0)
+
+            if epoch_logger is not None:
+                epoch_loss_sum += loss.detach().item()
+                epoch_n_batches += 1
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -463,6 +488,14 @@ def train_kalman_lag2(
             )
             val_metric = (bce_val * valid_mask_val).sum() / valid_mask_val.sum().clamp(min=1.0)
             val_metric = val_metric.item()
+
+        if epoch_logger is not None:
+            epoch_logger.append({
+                "epoch": epoch_idx,
+                "train_loss": epoch_loss_sum / max(epoch_n_batches, 1),
+                "val_metric": float(val_metric) if np.isfinite(val_metric) else float("nan"),
+                "lr": scheduler.get_last_lr()[0],
+            })
 
         if use_null_val:
             improved = np.isfinite(val_metric) and val_metric > best_val_metric + 1e-4

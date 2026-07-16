@@ -104,6 +104,32 @@ def _mean_metric(agg: Dict[str, Dict[str, float]], method: str, metric: str) -> 
     return float(agg.get(method, {}).get(metric, float("nan")))
 
 
+def _compute_per_traj_dts(
+    probs: np.ndarray,
+    bifurcation_times: np.ndarray,
+    is_positive: np.ndarray,
+    seq_lengths: np.ndarray,
+    threshold: float,
+) -> List[float]:
+    probs = np.nan_to_num(probs, nan=0.5, posinf=1.0, neginf=0.0)
+    times: List[float] = []
+    for i in range(len(probs)):
+        if not is_positive[i] or np.isnan(threshold):
+            times.append(float("nan"))
+            continue
+        tau = bifurcation_times[i]
+        if tau <= 0:
+            times.append(float("nan"))
+            continue
+        pre = probs[i, :int(tau)]
+        alerts = np.where(pre >= threshold)[0]
+        if len(alerts) > 0:
+            times.append(float(tau - alerts[0]))
+        else:
+            times.append(float("nan"))
+    return times
+
+
 _SYSTEM_BUILDERS = {"fold": "fold", "hopf": "hopf", "logistic": "logistic"}
 
 
@@ -170,8 +196,31 @@ def _run_synthetic_experiment(
             arrays_null["seq_lengths"][test_idx_n],
             threshold=0.6,
         )
+        per_traj_dts_raw = _compute_per_traj_dts(
+            csd_scores_test,
+            arrays_signal["bifurcation_times"][test_idx_s],
+            arrays_signal["is_positive"][test_idx_s],
+            arrays_signal["seq_lengths"][test_idx_s],
+            0.6,
+        )
+        writer.write_trajectory_data(
+            system, "Raw-CSD", 0,
+            probs_test=csd_scores_test,
+            probs_null=csd_scores_null_test,
+            bifurcation_times=arrays_signal["bifurcation_times"][test_idx_s],
+            bifurcation_times_null=arrays_null["bifurcation_times"][test_idx_n],
+            seq_lengths=arrays_signal["seq_lengths"][test_idx_s],
+            seq_lengths_null=arrays_null["seq_lengths"][test_idx_n],
+            threshold=np.array([0.6]),
+            detection_times=np.array(per_traj_dts_raw, dtype=np.float32),
+        )
         runs.append(RunResult(method="Raw-CSD", seed=0, metrics=raw_metrics))
-        writer.write_result_row({"system": system, "seed": 0, "method": "Raw-CSD", **raw_metrics})
+        writer.write_result_row({
+            "system": system, "seed": 0, "method": "Raw-CSD",
+            **raw_metrics,
+            "threshold": 0.6,
+            "n_epochs_trained": 0,
+        })
 
     if _enabled("RunningVar"):
         var_scores_test = raw_var_indicator(arrays_signal["features"][test_idx_s], arrays_signal["seq_lengths"][test_idx_s], 30)
@@ -184,8 +233,25 @@ def _run_synthetic_experiment(
             var_scores_null_test,
             arrays_null["seq_lengths"][test_idx_n],
         )
+        per_traj_dts_var = [float("nan")] * len(var_scores_test)
+        writer.write_trajectory_data(
+            system, "RunningVar", 0,
+            probs_test=var_scores_test,
+            probs_null=var_scores_null_test,
+            bifurcation_times=arrays_signal["bifurcation_times"][test_idx_s],
+            bifurcation_times_null=arrays_null["bifurcation_times"][test_idx_n],
+            seq_lengths=arrays_signal["seq_lengths"][test_idx_s],
+            seq_lengths_null=arrays_null["seq_lengths"][test_idx_n],
+            threshold=np.array([float("nan")]),
+            detection_times=np.array(per_traj_dts_var, dtype=np.float32),
+        )
         runs.append(RunResult(method="RunningVar", seed=0, metrics=var_metrics))
-        writer.write_result_row({"system": system, "seed": 0, "method": "RunningVar", **var_metrics})
+        writer.write_result_row({
+            "system": system, "seed": 0, "method": "RunningVar",
+            **var_metrics,
+            "threshold": float("nan"),
+            "n_epochs_trained": 0,
+        })
 
     if _enabled("Lag2-CSD"):
         lag2_scores_test = raw_lag2_indicator(arrays_signal["features"][test_idx_s], arrays_signal["seq_lengths"][test_idx_s], 30)
@@ -199,8 +265,31 @@ def _run_synthetic_experiment(
             arrays_null["seq_lengths"][test_idx_n],
             threshold=0.5,
         )
+        per_traj_dts_lag2 = _compute_per_traj_dts(
+            lag2_scores_test,
+            arrays_signal["bifurcation_times"][test_idx_s],
+            arrays_signal["is_positive"][test_idx_s],
+            arrays_signal["seq_lengths"][test_idx_s],
+            0.5,
+        )
+        writer.write_trajectory_data(
+            system, "Lag2-CSD", 0,
+            probs_test=lag2_scores_test,
+            probs_null=lag2_scores_null_test,
+            bifurcation_times=arrays_signal["bifurcation_times"][test_idx_s],
+            bifurcation_times_null=arrays_null["bifurcation_times"][test_idx_n],
+            seq_lengths=arrays_signal["seq_lengths"][test_idx_s],
+            seq_lengths_null=arrays_null["seq_lengths"][test_idx_n],
+            threshold=np.array([0.5]),
+            detection_times=np.array(per_traj_dts_lag2, dtype=np.float32),
+        )
         runs.append(RunResult(method="Lag2-CSD", seed=0, metrics=lag2_metrics))
-        writer.write_result_row({"system": system, "seed": 0, "method": "Lag2-CSD", **lag2_metrics})
+        writer.write_result_row({
+            "system": system, "seed": 0, "method": "Lag2-CSD",
+            **lag2_metrics,
+            "threshold": 0.5,
+            "n_epochs_trained": 0,
+        })
 
     if _enabled("Lag2-CSD-detrended"):
         lag2_det_scores_test = raw_lag2_indicator_detrended(arrays_signal["features"][test_idx_s], arrays_signal["seq_lengths"][test_idx_s], 30)
@@ -214,8 +303,31 @@ def _run_synthetic_experiment(
             arrays_null["seq_lengths"][test_idx_n],
             threshold=0.5,
         )
+        per_traj_dts_lag2_det = _compute_per_traj_dts(
+            lag2_det_scores_test,
+            arrays_signal["bifurcation_times"][test_idx_s],
+            arrays_signal["is_positive"][test_idx_s],
+            arrays_signal["seq_lengths"][test_idx_s],
+            0.5,
+        )
+        writer.write_trajectory_data(
+            system, "Lag2-CSD-detrended", 0,
+            probs_test=lag2_det_scores_test,
+            probs_null=lag2_det_scores_null_test,
+            bifurcation_times=arrays_signal["bifurcation_times"][test_idx_s],
+            bifurcation_times_null=arrays_null["bifurcation_times"][test_idx_n],
+            seq_lengths=arrays_signal["seq_lengths"][test_idx_s],
+            seq_lengths_null=arrays_null["seq_lengths"][test_idx_n],
+            threshold=np.array([0.5]),
+            detection_times=np.array(per_traj_dts_lag2_det, dtype=np.float32),
+        )
         runs.append(RunResult(method="Lag2-CSD-detrended", seed=0, metrics=lag2_det_metrics))
-        writer.write_result_row({"system": system, "seed": 0, "method": "Lag2-CSD-detrended", **lag2_det_metrics})
+        writer.write_result_row({
+            "system": system, "seed": 0, "method": "Lag2-CSD-detrended",
+            **lag2_det_metrics,
+            "threshold": 0.5,
+            "n_epochs_trained": 0,
+        })
 
     methods_list = [
         ("Kalman-BCE", "bce"),
@@ -229,10 +341,13 @@ def _run_synthetic_experiment(
     for seed in seeds:
         for method_name, loss_type in methods_list:
             pbar.set_description(f"{system} {method_name}")
+            epoch_logs: List[Dict] = []
             model = train_kalman(
                 tensors_signal, train_idx_s, val_idx_s,
                 loss_type=loss_type, seed=seed, config=config, device=device,
+                epoch_logger=epoch_logs,
             )
+            writer.write_epoch_log(system, method_name, seed, epoch_logs)
 
             probs_test = build_probs(model, tensors_signal, test_idx_s)
             probs_null = build_probs(model, tensors_null, test_idx_n)
@@ -260,10 +375,34 @@ def _run_synthetic_experiment(
                 arrays_null["seq_lengths"][test_idx_n],
             )
             null_met = compute_null_metrics(probs_null, thresh, arrays_null["seq_lengths"][test_idx_n])
+            per_traj_dts = _compute_per_traj_dts(
+                probs_test,
+                arrays_signal["bifurcation_times"][test_idx_s],
+                arrays_signal["is_positive"][test_idx_s],
+                arrays_signal["seq_lengths"][test_idx_s],
+                thresh,
+            )
+            writer.write_trajectory_data(
+                system, method_name, seed,
+                probs_test=probs_test,
+                probs_null=probs_null,
+                probs_val=probs_val,
+                bifurcation_times=arrays_signal["bifurcation_times"][test_idx_s],
+                bifurcation_times_null=arrays_null["bifurcation_times"][test_idx_n],
+                seq_lengths=arrays_signal["seq_lengths"][test_idx_s],
+                seq_lengths_null=arrays_null["seq_lengths"][test_idx_n],
+                threshold=np.array([thresh]),
+                detection_times=np.array(per_traj_dts, dtype=np.float32),
+            )
 
             metrics = {"detection_time": dt, "ew_auc": ewa, **null_met}
             runs.append(RunResult(method=method_name, seed=seed, metrics=metrics))
-            writer.write_result_row({"system": system, "seed": seed, "method": method_name, **metrics})
+            writer.write_result_row({
+                "system": system, "seed": seed, "method": method_name,
+                **metrics,
+                "threshold": thresh,
+                "n_epochs_trained": len(epoch_logs),
+            })
             pbar.update(1)
     pbar.close()
 
@@ -276,10 +415,13 @@ def _run_synthetic_experiment(
         pbar_aug = tqdm(total=len(seeds), desc=f"{system} Kalman-LSTM-Aug", unit="run", leave=False)
         for seed in seeds:
             pbar_aug.set_description(f"{system} Kalman-LSTM-Aug")
+            epoch_logs_aug: List[Dict] = []
             model_aug = train_kalman(
                 tensors_signal_aug, train_idx_s, val_idx_s,
                 loss_type="lstm_spec", seed=seed, config=config, device=device,
+                epoch_logger=epoch_logs_aug,
             )
+            writer.write_epoch_log(system, "Kalman-LSTM-Aug", seed, epoch_logs_aug)
 
             probs_test_aug = build_probs(model_aug, tensors_signal_aug, test_idx_s)
             probs_null_aug = build_probs(model_aug, tensors_null_aug, test_idx_n)
@@ -303,12 +445,36 @@ def _run_synthetic_experiment(
                 probs_null_aug, arrays_null["seq_lengths"][test_idx_n],
             )
             null_met_aug = compute_null_metrics(probs_null_aug, thresh_aug, arrays_null["seq_lengths"][test_idx_n])
+            per_traj_dts_aug = _compute_per_traj_dts(
+                probs_test_aug,
+                arrays_signal["bifurcation_times"][test_idx_s],
+                arrays_signal["is_positive"][test_idx_s],
+                arrays_signal["seq_lengths"][test_idx_s],
+                thresh_aug,
+            )
+            writer.write_trajectory_data(
+                system, "Kalman-LSTM-Aug", seed,
+                probs_test=probs_test_aug,
+                probs_null=probs_null_aug,
+                probs_val=probs_val_aug,
+                bifurcation_times=arrays_signal["bifurcation_times"][test_idx_s],
+                bifurcation_times_null=arrays_null["bifurcation_times"][test_idx_n],
+                seq_lengths=arrays_signal["seq_lengths"][test_idx_s],
+                seq_lengths_null=arrays_null["seq_lengths"][test_idx_n],
+                threshold=np.array([thresh_aug]),
+                detection_times=np.array(per_traj_dts_aug, dtype=np.float32),
+            )
 
             aug_metrics = {
                 "detection_time": dt_aug, "ew_auc": ewa_aug, **null_met_aug,
             }
             runs.append(RunResult(method="Kalman-LSTM-Aug", seed=seed, metrics=aug_metrics))
-            writer.write_result_row({"system": system, "seed": seed, "method": "Kalman-LSTM-Aug", **aug_metrics})
+            writer.write_result_row({
+                "system": system, "seed": seed, "method": "Kalman-LSTM-Aug",
+                **aug_metrics,
+                "threshold": thresh_aug,
+                "n_epochs_trained": len(epoch_logs_aug),
+            })
             pbar_aug.update(1)
         pbar_aug.close()
 
@@ -357,12 +523,36 @@ def _run_synthetic_experiment(
             mu_test_n_kl2, arrays_null["seq_lengths"][test_idx_n],
         )
         null_m_kl2 = compute_null_metrics(mu_test_n_kl2, thresh_kl2, arrays_null["seq_lengths"][test_idx_n])
+        per_traj_dts_kl2 = _compute_per_traj_dts(
+            mu_test_s_kl2,
+            arrays_signal["bifurcation_times"][test_idx_s],
+            arrays_signal["is_positive"][test_idx_s],
+            arrays_signal["seq_lengths"][test_idx_s],
+            thresh_kl2,
+        )
+        writer.write_trajectory_data(
+            system, "Kalman-Lag2", 0,
+            probs_test=mu_test_s_kl2,
+            probs_null=mu_test_n_kl2,
+            probs_val=mu_val_s_kl2,
+            bifurcation_times=arrays_signal["bifurcation_times"][test_idx_s],
+            bifurcation_times_null=arrays_null["bifurcation_times"][test_idx_n],
+            seq_lengths=arrays_signal["seq_lengths"][test_idx_s],
+            seq_lengths_null=arrays_null["seq_lengths"][test_idx_n],
+            threshold=np.array([thresh_kl2]),
+            detection_times=np.array(per_traj_dts_kl2, dtype=np.float32),
+        )
 
         kl2_metrics = {
             "detection_time": dt_kl2, "ew_auc": ewa_kl2, **null_m_kl2,
         }
         runs.append(RunResult(method="Kalman-Lag2", seed=0, metrics=kl2_metrics))
-        writer.write_result_row({"system": system, "seed": 0, "method": "Kalman-Lag2", **kl2_metrics})
+        writer.write_result_row({
+            "system": system, "seed": 0, "method": "Kalman-Lag2",
+            **kl2_metrics,
+            "threshold": thresh_kl2,
+            "n_epochs_trained": 0,
+        })
 
     # --- Kalman-Lag2-Net (learned MLP head on top of Kalman) ---
     if _enabled("Kalman-Lag2-Net"):
@@ -377,6 +567,7 @@ def _run_synthetic_experiment(
         for seed in seeds:
             cfg_kl2 = copy.deepcopy(config)
             cfg_kl2.setdefault("training", {})["seed_override"] = seed
+            epoch_logs_kl2: List[Dict] = []
             model_kl2 = train_kalman_lag2(
                 lag2_det_sig, train_idx_s, val_idx_s,
                 arrays_signal["bifurcation_times"],
@@ -385,12 +576,13 @@ def _run_synthetic_experiment(
                 q=best_q_kl2, config=cfg_kl2, device=device,
                 lag2_null=lag2_det_null[val_idx_n],
                 null_seq_lengths=arrays_null["seq_lengths"][val_idx_n],
+                epoch_logger=epoch_logs_kl2,
             )
+            writer.write_epoch_log(system, "Kalman-Lag2-Net", seed, epoch_logs_kl2)
 
             probs_test_kl2 = build_probs_kalman_lag2(model_kl2, lag2_det_sig, test_idx_s)
             probs_null_kl2 = build_probs_kalman_lag2(model_kl2, lag2_det_null, test_idx_n)
             probs_val_kl2 = build_probs_kalman_lag2(model_kl2, lag2_det_sig, val_idx_s)
-            probs_val_n_kl2 = build_probs_kalman_lag2(model_kl2, lag2_det_null, val_idx_n)
 
             thresh_kl2 = select_threshold(
                 probs_val_kl2, arrays_signal["bifurcation_times"][val_idx_s],
@@ -410,12 +602,36 @@ def _run_synthetic_experiment(
                 probs_null_kl2, arrays_null["seq_lengths"][test_idx_n],
             )
             null_m_kl2 = compute_null_metrics(probs_null_kl2, thresh_kl2, arrays_null["seq_lengths"][test_idx_n])
+            per_traj_dts_kl2 = _compute_per_traj_dts(
+                probs_test_kl2,
+                arrays_signal["bifurcation_times"][test_idx_s],
+                arrays_signal["is_positive"][test_idx_s],
+                arrays_signal["seq_lengths"][test_idx_s],
+                thresh_kl2,
+            )
+            writer.write_trajectory_data(
+                system, "Kalman-Lag2-Net", seed,
+                probs_test=probs_test_kl2,
+                probs_null=probs_null_kl2,
+                probs_val=probs_val_kl2,
+                bifurcation_times=arrays_signal["bifurcation_times"][test_idx_s],
+                bifurcation_times_null=arrays_null["bifurcation_times"][test_idx_n],
+                seq_lengths=arrays_signal["seq_lengths"][test_idx_s],
+                seq_lengths_null=arrays_null["seq_lengths"][test_idx_n],
+                threshold=np.array([thresh_kl2]),
+                detection_times=np.array(per_traj_dts_kl2, dtype=np.float32),
+            )
 
             kl2_metrics = {
                 "detection_time": dt_kl2, "ew_auc": ewa_kl2, **null_m_kl2,
             }
             runs.append(RunResult(method="Kalman-Lag2-Net", seed=seed, metrics=kl2_metrics))
-            writer.write_result_row({"system": system, "seed": seed, "method": "Kalman-Lag2-Net", **kl2_metrics})
+            writer.write_result_row({
+                "system": system, "seed": seed, "method": "Kalman-Lag2-Net",
+                **kl2_metrics,
+                "threshold": thresh_kl2,
+                "n_epochs_trained": len(epoch_logs_kl2),
+            })
 
     return SystemResult(system=system, runs=runs)
 
