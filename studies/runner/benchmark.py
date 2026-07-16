@@ -731,7 +731,7 @@ def _parse_args() -> Tuple[List[str], Optional[int], Optional[set[str]]]:
         else:
             run_names.append(arg)
     if not run_names:
-        run_names = ["default", "high_noise", "low_data"]
+        run_names = ["patients_100", "patients_200", "patients_300", "patients_400", "patients_500", "high_noise"]
     return run_names, n_seeds_override, methods_override
 
 
