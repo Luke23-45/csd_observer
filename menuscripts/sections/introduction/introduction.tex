@@ -1,93 +1,75 @@
 \section{Introduction}
 \label{sec:introduction}
 
-Critical transitions are often preceded by changes in the observable dynamics
-of a system. The practical question is not only whether a transition can be
-recognized after it occurs, but whether a warning signal can be extracted early
-enough to support intervention. This makes early-warning detection a problem of
-timing, calibration, and false-alarm control, not only binary classification.
+Critical transitions in dynamical systems are often preceded by measurable
+changes in the observable time series. The practical question is whether
+these changes can be detected early enough to support intervention. This
+makes early-warning detection a problem of timing, calibration, and
+false-alarm control---not only binary classification.
 
-Many early-warning studies evaluate a method on a narrow family of dynamics.
-That setting can obscure a basic difficulty: different bifurcations do not
-produce the same warning signature. A fold transition, a Hopf transition, and a
-logistic transition place different demands on an observer. A method that
-tracks one regime well may be poorly calibrated, late, or overly sensitive in
-another. In learned observers, the architecture and loss function impose an
-inductive bias. That bias can help when it matches the dynamics, but it should
-not be assumed to transfer uniformly.
+Classical early-warning indicators based on variance, autocorrelation, and
+related statistics have been applied across ecology, climate science, and
+engineering \citep{scheffer2009early,dakos2008slowing}. These indicators are
+transparent and require no model fitting, but each encodes a fixed functional
+form for the warning signature. When the transition mechanism changes, a
+statistic that was informative for one bifurcation type may become unreliable
+for another.
 
-This paper studies that transfer question for learned Kalman observers. We
-compare a binary-cross-entropy Kalman observer with a spectral recurrent
-variant across synthetic fold, Hopf, and logistic systems. The benchmark varies
-the number of training trajectories from 100 to 500 patients and evaluates each
-setting across ten random seeds. Performance is measured by detection time,
-early-warning AUC, and false-positive rate, so the comparison reflects both
-ranking quality and operational calibration.
+Learned observers offer an alternative. A Kalman-style observer maintains a
+latent state updated by a prediction--correction rule and can learn the
+mapping from observations to warning scores from data. Recent work has shown
+that such models can extract early-warning information from simulated
+systems and, in some cases, transfer across dynamics with matching
+normal-form structure \citep{bury2021deep,deb2022machine}. However, a
+fold bifurcation, a Hopf bifurcation, and a period-doubling transition
+arise from different local mechanisms
+\citep{kuznetsov2004elements,strogatz2015nonlinear} and produce different
+pre-transition signatures. There is no reason to expect uniform transfer
+across all of them.
 
-The main result is regime dependence. The spectral recurrent observer improves
-early-warning AUC on fold and Hopf systems at 500 patients and matches the BCE
-observer on logistic dynamics, but those gains do not imply uniform dominance
-across false-positive control or detection-time summaries. Across patient
-counts, the relative behavior of the two observers remains tied to the system
-and the metric being optimized. The contribution is therefore not a universal
-detector, but a controlled account of where learned observer variants help,
-where they trade one objective for another, and why early-warning model
-selection should be tied to the dynamical regime.
+This paper studies the transfer question directly. We compare two learned
+Kalman observer variants---a binary-cross-entropy observer (Kalman-BCE) and
+a spectral recurrent variant (Kalman-LSTM-Spec)---across synthetic fold,
+Hopf, and logistic systems. The benchmark varies the training-set size from
+100 to 500 trajectories and evaluates each setting across ten random seeds.
+Performance is measured by three metrics: detection time, early-warning AUC,
+and false-positive rate. This design separates ranking quality from
+operational calibration.
 
-\subsection{Background and Motivation}
-\label{sec:background}
-
-Classical early-warning signals are usually built from local changes in a time
-series, such as variance or autocorrelation. These summaries are attractive
-because they are simple and interpretable, but they also compress the data into
-fixed statistics. Observer-based methods take a different view. They estimate a
-latent state or warning score over time, allowing the score trajectory to be
-learned from data rather than fixed by a hand-designed statistic.
-
-Kalman-style observers combine sequential filtering with explicit state
-dynamics. A learned Kalman observer can shape the mapping from measurements to
-warning scores while retaining that filtering structure. Spectral
-regularization adds a further bias by constraining the learned observer
-dynamics. This bias may favor systems where the approach to transition is
-expressed through oscillatory or stability-related structure. It may offer less
-benefit when the warning signal is better captured by simpler statistics or a
-different thresholding behavior.
-
-\subsection{Problem Gap}
-\label{sec:gap}
-
-The missing question is not whether a learned observer can perform well on one
-system. The harder question is whether the same observer behavior remains
-effective across qualitatively different bifurcation mechanisms. A single
-aggregate score can hide this distinction. Higher early-warning AUC does not
-necessarily imply earlier detection, and earlier detection can come with more
-false alarms. Likewise, a method can perform well at one patient count and lose
-that advantage when the amount of data changes.
-
-This study addresses the gap by evaluating the same observer variants across
-three systems, five patient counts, and three metrics. The goal is to expose the
-trade-offs directly rather than collapse them into a single claim of overall
-superiority.
+The main finding is regime dependence. At 500 trajectories, the spectral
+recurrent observer achieves higher early-warning AUC on fold
+($0.903 \pm 0.059$ vs.\ $0.827 \pm 0.235$) and Hopf
+($0.823 \pm 0.243$ vs.\ $0.617 \pm 0.177$), while both methods reach
+perfect AUC on the logistic system. However, the BCE observer produces
+earlier detections on fold (detection time $109.5 \pm 28.6$ vs.\
+$72.7 \pm 11.0$ steps) and lower false-positive rates on fold and logistic.
+The relative ranking also shifts with training-set size: LSTM-Spec benefits
+more from additional data on fold and Hopf, while logistic performance
+saturates by 200 trajectories for both methods. No single observer dominates
+across all three systems, metrics, and data sizes.
 
 \subsection{Contributions}
 \label{sec:contributions}
 
 We make four contributions.
 
-\begin{itemize}[leftmargin=*]
-  \item We define a controlled benchmark for learned Kalman observers across
-        fold, Hopf, and logistic transition systems.
-  \item We evaluate observer behavior across patient-count settings from 100
-        to 500 trajectories, using ten random seeds per setting.
-  \item We compare the observers using detection time, early-warning AUC, and
-        false-positive rate, rather than relying on a single aggregate metric.
-  \item We show that the observed performance is system- and metric-dependent:
-        the spectral recurrent observer improves some early-warning AUC
-        summaries, but it does not dominate the BCE observer across all systems,
-        patient counts, and metrics.
-\end{itemize}
+\begin{enumerate}[leftmargin=*]
+  \item A controlled benchmark for learned Kalman observers across fold,
+        Hopf, and logistic bifurcation systems, with deterministic seed
+        generation and batch selection for reproducibility.
+  \item Evaluation across five training-set sizes (100--500 trajectories)
+        with ten seeds per setting, providing cross-seed variance estimates
+        for every reported metric.
+  \item A multi-metric comparison using detection time, early-warning AUC,
+        and false-positive rate, exposing trade-offs that a single aggregate
+        score would hide.
+  \item Evidence that observer performance is system- and metric-dependent:
+        the spectral recurrent observer improves discrimination on fold and
+        Hopf but does not dominate the BCE observer across all systems,
+        data sizes, and metrics.
+\end{enumerate}
 
-These contributions support a narrower and more defensible claim: learned
-observer design for early-warning detection should be evaluated as a
-regime-dependent modeling problem, not as a search for a detector that is
-uniformly best across bifurcation mechanisms.
+These contributions support a bounded claim: learned observer design for
+early-warning detection should be evaluated as a regime-dependent modeling
+problem, not as a search for a detector that transfers uniformly across
+bifurcation mechanisms.

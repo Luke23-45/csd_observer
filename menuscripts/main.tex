@@ -50,23 +50,23 @@
 \maketitle
 
 \begin{abstract}
-Early-warning methods for critical transitions are often evaluated as if a
-single detector should transfer across dynamical regimes. This assumption is
-too strong when the warning signatures differ across bifurcation mechanisms.
-We study this issue with learned Kalman observer variants on synthetic fold,
-Hopf, and logistic systems, using patient-count sweeps from 100 to 500
-trajectories and ten random seeds per setting. The benchmark compares a
-binary-cross-entropy Kalman observer with a spectral recurrent variant using
-detection time, early-warning AUC, and false-positive rate. At 500 patients,
-the spectral recurrent observer increases early-warning AUC on fold and Hopf
-systems and matches the BCE observer on logistic dynamics, but the gains do
-not extend uniformly to false-positive control or detection-time summaries.
-Across patient counts, the relative behavior of the two observers remains
-system- and metric-dependent. These results argue against treating
-early-warning detection as a single transferable classification problem.
-Instead, observer design and model selection should be tied to the dynamical
-regime, the available data depth, and the operating cost of false alarms
-versus delayed warnings.
+Early-warning methods for critical transitions are often evaluated on a
+single dynamical regime, leaving open the question of whether the learned
+behavior transfers across bifurcation mechanisms. We study this question
+with two learned Kalman observer variants---a binary-cross-entropy observer
+(Kalman-BCE) and a spectral recurrent variant (Kalman-LSTM-Spec)---on
+synthetic fold, Hopf, and logistic systems. The benchmark varies the
+training-set size from 100 to 500 trajectories and aggregates over ten
+random seeds per setting. At 500 trajectories, the spectral recurrent
+observer achieves higher early-warning AUC on fold ($0.903$ vs.\ $0.827$)
+and Hopf ($0.823$ vs.\ $0.617$), while both methods reach perfect AUC on
+logistic dynamics. However, the BCE observer produces earlier detections on
+fold and lower false-positive rates on fold and logistic. The relative
+ranking also shifts with training-set size. No single observer dominates
+across all systems, metrics, and data sizes. These results indicate that
+observer design for early-warning detection should be treated as a
+regime-dependent modeling problem rather than a search for a universally
+transferable detector.
 \end{abstract}
 
 \noindent\textbf{Keywords:} critical transitions; early-warning signals; Kalman observer; bifurcation detection; spectral regularization; dynamical systems

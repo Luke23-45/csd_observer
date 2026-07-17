@@ -6,6 +6,24 @@
 
 Table~\ref{tab:benchmark_500} summarizes the 500-patient benchmark.
 
+\begin{table}[htbp]
+  \centering
+  \caption{500-patient benchmark summary across systems and observer variants.}
+  \label{tab:benchmark_500}
+  \begin{tabular}{lllrrrrr}
+    \toprule
+    System & Method & n & Detection Time & EW-AUC & FPR & Threshold & Epochs \\
+    \midrule
+    Fold & Kalman-BCE & 10 & 109.481 $\pm$ 28.639 & 0.827 $\pm$ 0.235 & 0.330 $\pm$ 0.277 & 0.432 $\pm$ 0.082 & 50.0 $\pm$ 0.0 \\
+    Fold & Kalman-LSTM-Spec & 10 & 72.742 $\pm$ 11.015 & 0.903 $\pm$ 0.059 & 0.379 $\pm$ 0.165 & 0.274 $\pm$ 0.118 & 45.2 $\pm$ 11.6 \\
+    Hopf & Kalman-BCE & 10 & 60.344 $\pm$ 26.482 & 0.617 $\pm$ 0.177 & 0.046 $\pm$ 0.133 & 0.500 $\pm$ 0.000 & 41.1 $\pm$ 12.5 \\
+    Hopf & Kalman-LSTM-Spec & 10 & 49.501 $\pm$ 3.787 & 0.823 $\pm$ 0.243 & 0.048 $\pm$ 0.075 & 0.500 $\pm$ 0.000 & 49.1 $\pm$ 2.2 \\
+    Logistic & Kalman-BCE & 10 & 61.838 $\pm$ 4.347 & 1.000 $\pm$ 0.000 & 0.201 $\pm$ 0.143 & 0.500 $\pm$ 0.000 & 50.0 $\pm$ 0.0 \\
+    Logistic & Kalman-LSTM-Spec & 10 & 62.013 $\pm$ 5.339 & 1.000 $\pm$ 0.000 & 0.268 $\pm$ 0.098 & 0.500 $\pm$ 0.000 & 47.7 $\pm$ 7.3 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
 On the fold system, Kalman-LSTM-Spec achieves higher early-warning AUC
 (\(0.903 \pm 0.059\) vs.\ \(0.827 \pm 0.235\)) with lower cross-seed variance.
 Kalman-BCE produces higher mean detection time (\(109.5 \pm 28.6\) vs.\
@@ -33,6 +51,55 @@ matters.
 Table~\ref{tab:benchmark_sweep} and Figure~\ref{fig:patient_sweep} report
 performance across patient counts from 100 to 500.
 
+\begin{table}[htbp]
+  \centering
+  \caption{Patient-depth sweep summary across all selected complete benchmark batches.}
+  \label{tab:benchmark_sweep}
+  \begin{tabular}{lllrrrr}
+    \toprule
+    Patients & System & Method & n & Detection Time & EW-AUC & FPR \\
+    \midrule
+    100 & Fold & Kalman-BCE & 10 & 121.104 $\pm$ 23.084 & 0.893 $\pm$ 0.067 & 0.454 $\pm$ 0.329 \\
+    100 & Fold & Kalman-LSTM-Spec & 10 & 108.072 $\pm$ 27.780 & 0.871 $\pm$ 0.049 & 0.449 $\pm$ 0.331 \\
+    100 & Hopf & Kalman-BCE & 10 & 91.382 $\pm$ 7.835 & 0.616 $\pm$ 0.154 & 0.360 $\pm$ 0.226 \\
+    100 & Hopf & Kalman-LSTM-Spec & 10 & 74.000 $\pm$ 45.033 & 0.652 $\pm$ 0.165 & 0.062 $\pm$ 0.146 \\
+    100 & Logistic & Kalman-BCE & 10 & 66.000 $\pm$ 0.516 & 0.914 $\pm$ 0.270 & 0.045 $\pm$ 0.085 \\
+    100 & Logistic & Kalman-LSTM-Spec & 10 & 66.667 $\pm$ 0.000 & 1.000 $\pm$ 0.000 & 0.088 $\pm$ 0.109 \\
+    200 & Fold & Kalman-BCE & 10 & 121.579 $\pm$ 20.054 & 0.722 $\pm$ 0.287 & 0.493 $\pm$ 0.286 \\
+    200 & Fold & Kalman-LSTM-Spec & 10 & 98.374 $\pm$ 25.453 & 0.790 $\pm$ 0.112 & 0.305 $\pm$ 0.274 \\
+    200 & Hopf & Kalman-BCE & 10 & 75.930 $\pm$ 22.014 & 0.633 $\pm$ 0.139 & 0.138 $\pm$ 0.185 \\
+    200 & Hopf & Kalman-LSTM-Spec & 10 & nan & 0.758 $\pm$ 0.181 & 0.000 $\pm$ 0.000 \\
+    200 & Logistic & Kalman-BCE & 10 & 66.067 $\pm$ 0.548 & 1.000 $\pm$ 0.000 & 0.070 $\pm$ 0.115 \\
+    200 & Logistic & Kalman-LSTM-Spec & 10 & 64.920 $\pm$ 3.296 & 1.000 $\pm$ 0.000 & 0.228 $\pm$ 0.131 \\
+    300 & Fold & Kalman-BCE & 10 & 120.350 $\pm$ 22.309 & 0.828 $\pm$ 0.225 & 0.423 $\pm$ 0.246 \\
+    300 & Fold & Kalman-LSTM-Spec & 10 & 86.061 $\pm$ 26.656 & 0.878 $\pm$ 0.087 & 0.287 $\pm$ 0.217 \\
+    300 & Hopf & Kalman-BCE & 10 & 73.289 $\pm$ 22.999 & 0.642 $\pm$ 0.166 & 0.103 $\pm$ 0.194 \\
+    300 & Hopf & Kalman-LSTM-Spec & 10 & 30.260 & 0.831 $\pm$ 0.193 & 0.008 $\pm$ 0.025 \\
+    300 & Logistic & Kalman-BCE & 10 & 61.395 $\pm$ 11.704 & 1.000 $\pm$ 0.000 & 0.131 $\pm$ 0.147 \\
+    300 & Logistic & Kalman-LSTM-Spec & 10 & 63.785 $\pm$ 4.061 & 1.000 $\pm$ 0.000 & 0.247 $\pm$ 0.131 \\
+    400 & Fold & Kalman-BCE & 10 & 112.025 $\pm$ 28.043 & 0.847 $\pm$ 0.240 & 0.401 $\pm$ 0.274 \\
+    400 & Fold & Kalman-LSTM-Spec & 10 & 72.549 $\pm$ 10.645 & 0.899 $\pm$ 0.054 & 0.369 $\pm$ 0.162 \\
+    400 & Hopf & Kalman-BCE & 10 & 62.627 $\pm$ 32.169 & 0.601 $\pm$ 0.187 & 0.098 $\pm$ 0.199 \\
+    400 & Hopf & Kalman-LSTM-Spec & 10 & 44.335 $\pm$ 1.582 & 0.724 $\pm$ 0.276 & 0.031 $\pm$ 0.067 \\
+    400 & Logistic & Kalman-BCE & 10 & 61.779 $\pm$ 5.713 & 1.000 $\pm$ 0.000 & 0.191 $\pm$ 0.147 \\
+    400 & Logistic & Kalman-LSTM-Spec & 10 & 62.286 $\pm$ 5.352 & 1.000 $\pm$ 0.000 & 0.274 $\pm$ 0.101 \\
+    500 & Fold & Kalman-BCE & 10 & 109.481 $\pm$ 28.639 & 0.827 $\pm$ 0.235 & 0.330 $\pm$ 0.277 \\
+    500 & Fold & Kalman-LSTM-Spec & 10 & 72.742 $\pm$ 11.015 & 0.903 $\pm$ 0.059 & 0.379 $\pm$ 0.165 \\
+    500 & Hopf & Kalman-BCE & 10 & 60.344 $\pm$ 26.482 & 0.617 $\pm$ 0.177 & 0.046 $\pm$ 0.133 \\
+    500 & Hopf & Kalman-LSTM-Spec & 10 & 49.501 $\pm$ 3.787 & 0.823 $\pm$ 0.243 & 0.048 $\pm$ 0.075 \\
+    500 & Logistic & Kalman-BCE & 10 & 61.838 $\pm$ 4.347 & 1.000 $\pm$ 0.000 & 0.201 $\pm$ 0.143 \\
+    500 & Logistic & Kalman-LSTM-Spec & 10 & 62.013 $\pm$ 5.339 & 1.000 $\pm$ 0.000 & 0.268 $\pm$ 0.098 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figure1_patient_sweep.pdf}
+  \caption{Performance metrics across varying patient counts (100 to 500).}
+  \label{fig:patient_sweep}
+\end{figure}
+
 On the fold system, LSTM-Spec detection time decreases from \(108\) to \(73\)
 steps as patient count grows, while BCE detection time stays near
 \(110\)--\(121\). The EW-AUC gap widens in the same direction: both methods
@@ -59,6 +126,13 @@ higher.
 Figure~\ref{fig:trajectory_panels} shows representative score trajectories at
 500~patients.
 
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figure2_trajectory_panels.pdf}
+  \caption{Representative score trajectories at 500 patients.}
+  \label{fig:trajectory_panels}
+\end{figure}
+
 On the fold system, the BCE score rises gradually and crosses threshold early in
 the trajectory. The LSTM-Spec score holds low longer and then rises sharply near
 the bifurcation. This matches the aggregate pattern: BCE has higher mean
@@ -78,6 +152,13 @@ bifurcation point.
 
 Figure~\ref{fig:training_curves} plots training and validation loss for both
 variants at 500~patients. Both methods converge smoothly with minimal
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figure3_training_curves.pdf}
+  \caption{Training and validation loss curves at 500 patients.}
+  \label{fig:training_curves}
+\end{figure}
 train--validation gap. BCE plateaus around epoch~20--30, while LSTM-Spec
 continues to decrease through the full 50~epochs. LSTM-Spec reaches a lower
 final loss on all three systems.
