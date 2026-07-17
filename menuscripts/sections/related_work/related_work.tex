@@ -1,27 +1,63 @@
 \section{Related Work}
 \label{sec:related}
 
-% If the target venue uses strict IMRAD formatting, this section can be
-% merged into Section~\ref{sec:introduction}.
+This work sits between classical early-warning indicators, sequential
+observers, and learned models for dynamical systems. The relevant issue is not
+which family should be preferred in isolation. The issue is how their
+assumptions interact with the bifurcation mechanism being monitored.
 
 \subsection{Classical Early-Warning Signals}
 \label{sec:related:classical}
 
-% Variance, autocorrelation, lag-based indicators, critical slowing down.
-% Role: establishes the non-learned baseline context; motivates why simple
-% indicators can remain competitive; explains why learned methods should be
-% compared against strong simple baselines.
+Classical early-warning analysis is built on the idea that a system approaching
+a critical transition may recover more slowly from perturbations. This
+``critical slowing down'' motivates statistics such as variance and
+autocorrelation, which can increase as the dominant return rate weakens
+\citep{dakos2008slowing,scheffer2009early,carpenter2006rising}. These indicators are attractive
+because they are transparent and require little modeling machinery.
+
+Their simplicity is also a limitation. A fixed statistic assumes that the
+warning signature has a known form. That assumption may be reasonable for one
+transition mechanism and weak for another. Autocorrelation, variance, and
+lag-based summaries can therefore be strong baselines without being complete
+detectors \citep{boettiger2012early,lenton2011early}. In this paper they motivate the evaluation standard: learned
+observers should be compared against simple signals that already encode useful
+dynamical information.
 
 \subsection{Observer and Kalman-Based Approaches}
 \label{sec:related:observer}
 
-% Kalman filtering, observer dynamics, and learned observer variants.
-% Role: motivates the use of a Kalman observer; explains why stability and
-% filtering behavior matter; prepares the reader for the learned observer design.
+Kalman filtering provides a sequential framework for estimating latent state
+variables from noisy observations \citep{kalman1960new,luenberger1971introduction}. For early-warning
+detection, this structure is useful because the warning score is not only a
+function of the current sample; it is shaped by the trajectory of observations
+leading up to the transition. A Kalman-style observer can smooth noisy
+measurements, retain state, and produce a time-indexed score.
+
+The learned observer setting keeps the sequential structure but learns parts of
+the mapping from data. This creates a different trade-off from classical
+indicators. A learned observer may adapt to a regime-specific warning pattern,
+but its architecture and objective also introduce bias. Spectral regularization
+is one such bias: it constrains the learned observer dynamics and can be useful
+when stability or oscillatory structure is central to the warning signal. The
+same constraint need not help when the relevant signal is better captured by a
+different statistic or threshold behavior.
 
 \subsection{Learning Across Dynamical Regimes}
 \label{sec:related:regimes}
 
-% Why methods may not transfer uniformly across regimes. Role: supports the
-% honest framing that method performance can be conditional; prepares reviewers
-% for a trade-off result rather than a universal-best claim.
+Recent work has shown that learned models can extract early-warning information
+from simulated dynamical systems and transfer that information to other
+settings when the training data encode suitable normal-form structure
+\citep{bury2021deep,deb2022machine}. This line of work motivates learned early-warning
+detectors, but it also raises the central question for the present study: which
+parts of the learned behavior transfer, and which remain tied to the generating
+dynamics?
+
+Bifurcation theory gives a reason to expect conditional performance rather than
+uniform dominance. Fold, Hopf, and period-doubling transitions represent
+different local mechanisms \citep{kuznetsov2004elements,strogatz2015nonlinear}.
+They can therefore favor different warning statistics, score trajectories, and
+thresholds. A cross-bifurcation benchmark is needed to separate a useful
+regime-specific inductive bias from a detector that transfers uniformly. The
+experiments in this paper are designed for that distinction.

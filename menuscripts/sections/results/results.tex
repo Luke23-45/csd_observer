@@ -1,45 +1,105 @@
 \section{Results}
 \label{sec:results}
 
-% Report the evidence in the same order as the experimental design.
-
 \subsection{No Single Observer Dominates Across Systems and Metrics}
 \label{sec:results:overview}
 
-% Start with the full benchmark result — the central claim, before discussing
-% method-specific wins.
-% Use: Table~1, Figure~1.
-% Interpretation: The benchmark shows system- and metric-dependent trade-offs
-% rather than a universal ordering of methods.
+Table~\ref{tab:benchmark_500} summarizes the 500-patient benchmark.
+
+On the fold system, Kalman-LSTM-Spec achieves higher early-warning AUC
+(\(0.903 \pm 0.059\) vs.\ \(0.827 \pm 0.235\)) with lower cross-seed variance.
+Kalman-BCE produces higher mean detection time (\(109.5 \pm 28.6\) vs.\
+\(72.7 \pm 11.0\) steps), indicating earlier threshold crossings, and a
+slightly lower false-positive rate (\(0.330\) vs.\ \(0.379\)).
+
+On the Hopf system, both methods maintain low false-positive rates
+(\(\approx 0.05\)). LSTM-Spec again has higher EW-AUC (\(0.823 \pm 0.243\)
+vs.\ \(0.617 \pm 0.177\)). BCE has higher mean detection time (\(60.3\) vs.\
+\(49.5\) steps) but with larger variance (\(\pm 26.5\) vs.\ \(\pm 3.8\)).
+
+On the logistic system, both methods reach perfect EW-AUC (\(1.000\)) and
+similar detection times (\(\approx 62\) steps). The only separation is
+false-positive rate: BCE is lower (\(0.201 \pm 0.143\) vs.\
+\(0.268 \pm 0.098\)).
+
+No method dominates all three metrics on any system. LSTM-Spec tends to
+discriminate better (higher EW-AUC on fold and Hopf), while BCE is preferable
+when false-positive control is the priority or when earlier raw detection time
+matters.
 
 \subsection{Patient Count Changes the Method Ranking}
 \label{sec:results:sweep}
 
-% The patient-count sweep.
-% Use: Table~2, Figure~1.
-% Focus on whether performance trends are stable or sensitive to data depth.
+Table~\ref{tab:benchmark_sweep} and Figure~\ref{fig:patient_sweep} report
+performance across patient counts from 100 to 500.
+
+On the fold system, LSTM-Spec detection time decreases from \(108\) to \(73\)
+steps as patient count grows, while BCE detection time stays near
+\(110\)--\(121\). The EW-AUC gap widens in the same direction: both methods
+start near \(0.87\)--\(0.89\) at 100~patients, but by 500~patients LSTM-Spec
+reaches \(0.903\) while BCE is at \(0.827\). LSTM-Spec benefits more from
+additional training data on this system.
+
+On the Hopf system, LSTM-Spec EW-AUC increases from \(0.652\) to \(0.823\)
+across the sweep, compared with a flat range of \(0.60\)--\(0.64\) for BCE.
+However, LSTM-Spec detection time is undefined at 200~patients and is reported
+from a single seed at 300~patients. The threshold (\(0.500\)) exceeds the
+model's pre-bifurcation scores at these patient counts, even though the scores
+still discriminate in the EW-AUC sense. By 400--500~patients, threshold
+crossings become consistent.
+
+On the logistic system, both methods reach EW-AUC~\(= 1.0\) by 200~patients
+and maintain stable detection times near \(62\)--\(66\) steps. False-positive
+rate increases with patient count for both methods, with LSTM-Spec consistently
+higher.
 
 \subsection{Score Trajectories Reveal Regime-Specific Behavior}
 \label{sec:results:trajectories}
 
-% Representative score trajectories explaining why aggregate metrics differ.
-% Use: Figure~2.
-% Connect model behavior to the underlying dynamics.
+Figure~\ref{fig:trajectory_panels} shows representative score trajectories at
+500~patients.
+
+On the fold system, the BCE score rises gradually and crosses threshold early in
+the trajectory. The LSTM-Spec score holds low longer and then rises sharply near
+the bifurcation. This matches the aggregate pattern: BCE has higher mean
+detection time (earlier crossings) but wider variance, while LSTM-Spec has a
+tighter, later crossing with better signal--null separation.
+
+On the Hopf system, the BCE score is nearly flat. The LSTM-Spec score shows more
+structure near the bifurcation but, in the displayed seed, does not cross
+threshold before the transition.
+
+On the logistic system, the BCE score remains below threshold for the displayed
+seed. The LSTM-Spec score crosses threshold early and drops after the
+bifurcation point.
 
 \subsection{Training Curves and Optimization Behavior}
 \label{sec:results:training}
 
-% Use only if the training curves reveal something meaningful.
-% Use: Figure~3.
-% If not scientifically informative, move to supplement.
+Figure~\ref{fig:training_curves} plots training and validation loss for both
+variants at 500~patients. Both methods converge smoothly with minimal
+train--validation gap. BCE plateaus around epoch~20--30, while LSTM-Spec
+continues to decrease through the full 50~epochs. LSTM-Spec reaches a lower
+final loss on all three systems.
+
+The lower training loss for LSTM-Spec is consistent with its higher EW-AUC on
+fold and Hopf: the model fits the Gaussian ramp target more tightly. On the
+logistic system, both methods reach perfect EW-AUC despite a large loss
+difference, indicating that the logistic transition is detectable even with a
+coarser fit to the training target.
 
 \subsection{Summary of Main Findings}
 \label{sec:results:summary}
 
-% Compact summary:
-% \begin{itemize}
-%   \item One method may be strong on one system.
-%   \item Another may be preferable on a different metric.
-%   \item Results support regime-aware observer selection.
-% \end{itemize}
-% Avoid discussion-style speculation here.
+\begin{itemize}[leftmargin=*]
+  \item LSTM-Spec achieves higher EW-AUC than BCE on fold and Hopf at
+        500~patients. Both reach perfect EW-AUC on logistic.
+  \item BCE produces earlier detections (higher DT) on fold and comparable DT
+        elsewhere, but with larger cross-seed variance.
+  \item BCE has lower false-positive rate on fold and logistic. Both methods
+        have low FPR on Hopf at high patient counts.
+  \item LSTM-Spec benefits more from increasing patient count on fold and Hopf.
+        Logistic performance saturates by 200~patients for both methods.
+  \item Score trajectories differ in shape: BCE rises gradually, LSTM-Spec
+        produces sharper transitions closer to the bifurcation.
+\end{itemize}

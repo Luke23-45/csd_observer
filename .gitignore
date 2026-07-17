@@ -10,4 +10,5 @@ outputs/*
 analysis/experiment_data/*
 analysis/visualize/outputs/*
 !analysis/visualize/outputs/.gitkeep
+menuscripts/$buildPath
 legacy/

@@ -1,3 +1,149 @@
 \section{Supplementary Material}
-% Additional tables, figures, exploratory methods, and analyses
-% that support the main text without disrupting its flow.
+\label{sec:appendix}
+
+\subsection{System Equations and Parameters}
+\label{sec:appendix:systems}
+
+Table~\ref{tab:system_params} lists the parameter defaults for each system.
+Bifurcation time is computed from the control-parameter sweep so that the
+bifurcation occurs at a known time step within each trajectory.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Data-generation parameters for each dynamical system. All
+  trajectories have length $T = 200$. The bifurcation time $\tau$ is derived
+  from the control-parameter endpoints and the bifurcation value.}
+  \label{tab:system_params}
+  \small
+  \begin{tabular}{llll}
+    \toprule
+    Parameter & Fold & Hopf & Logistic \\
+    \midrule
+    Update rule
+      & $x \leftarrow x + (r - x^2) + \xi$
+      & $\dot{r} = \mu r - r^3 + \xi$
+      & $x \leftarrow \mu x(1 - x) + \xi$ \\[2pt]
+    Control parameter
+      & $r \in [2.0, -1.0]$
+      & $\mu \in [-0.5, 0.5]$
+      & $\mu \in [2.5, 4.0]$ \\[2pt]
+    Bifurcation value
+      & $r^{*} = 0$
+      & $\mu^{*} = 0$
+      & $\mu^{*} = 3.0$ \\[2pt]
+    $\tau$ (steps)
+      & $133$
+      & $100$
+      & $67$ \\[2pt]
+    Process noise $\sigma_{\xi}$
+      & 0.30
+      & 0.05
+      & 0.02 \\[2pt]
+    Observation noise $\sigma_{\mathrm{obs}}$
+      & 0.10
+      & 0.15
+      & 0.05 \\[2pt]
+    Observation dim $D$
+      & 1
+      & 2
+      & 1 \\[2pt]
+    Null behavior
+      & $r$ fixed at $r_{\mathrm{start}}$
+      & $\mu$ fixed at $\mu_{\mathrm{start}}$
+      & $\mu$ fixed at 2.8 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\textbf{Fold.} The state $x$ follows $x_{t+1} = x_t + (r_t - x_t^2) +
+\sigma_\xi\,\varepsilon_t$ with $\varepsilon_t \sim \mathcal{N}(0,1)$. The
+control parameter $r$ decreases linearly from 2.0 to $-1.0$ over 200~steps.
+At $r = 0$ the stable equilibrium is lost. Null trajectories hold $r$ at
+$r_{\mathrm{start}} = 2.0$ for all steps. Initial state:
+$x_0 \sim \mathcal{N}(0, 0.5^2)$. State clipped to $[-5, 5]$.
+
+\textbf{Hopf.} The system is written in polar coordinates $(r, \theta)$:
+$r_{t+1} = r_t + (\mu_t\,r_t - r_t^3) + \sigma_\xi\,\varepsilon_t$ and
+$\theta_{t+1} = \theta_t + \omega + \sigma_\xi\,\varepsilon_t'$, with
+$\omega = 0.1$. The observation is $(r\cos\theta, r\sin\theta)$ plus
+observation noise. The control parameter $\mu$ increases from $-0.5$ to $0.5$;
+the bifurcation occurs at $\mu = 0$. Initial conditions:
+$r_0 \sim U(0.5, 1.5)$, $\theta_0 \sim U(0, 2\pi)$. Null trajectories hold
+$\mu$ at $\mu_{\mathrm{start}} = -0.5$.
+
+\textbf{Logistic.} The map $x_{t+1} = \mu_t\,x_t(1 - x_t) +
+\sigma_\xi\,\varepsilon_t$ with $\mu$ swept from 2.5 to 4.0. The first
+period-doubling bifurcation occurs at $\mu = 3.0$. Initial state:
+$x_0 \sim U(0.1, 0.9)$. Null trajectories hold $\mu$ at 2.8.
+
+\subsection{Training and Model Hyperparameters}
+\label{sec:appendix:hyperparams}
+
+Table~\ref{tab:hyperparams} lists all training and model hyperparameters used
+in the finalized benchmark.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Training and model hyperparameters. Values are fixed across all
+  systems and seeds.}
+  \label{tab:hyperparams}
+  \small
+  \begin{tabular}{ll}
+    \toprule
+    Hyperparameter & Value \\
+    \midrule
+    \multicolumn{2}{l}{\emph{Model}} \\[2pt]
+    Latent dimension $d$ & 4 \\
+    LSTM hidden dimension (LSTM-Spec only) & 8 \\
+    Transition init $A$ & $0.95\,I_d$ \\
+    $C$, $K$ init & $\mathcal{N}(0, 0.1^2)$ \\[4pt]
+    \multicolumn{2}{l}{\emph{Training}} \\[2pt]
+    Optimizer & AdamW \\
+    Learning rate & $10^{-3}$ \\
+    Weight decay & $10^{-5}$ \\
+    Scheduler & Cosine annealing \\
+    Scheduler $\eta_{\min}$ & $10^{-6}$ \\
+    Epochs & 50 \\
+    Batch size & 64 \\
+    Gradient clip norm & 1.0 \\
+    Early-stopping patience & 5 \\[4pt]
+    \multicolumn{2}{l}{\emph{Loss}} \\[2pt]
+    Primary loss & Binary cross-entropy \\
+    Gaussian ramp $\sigma$ & 60 \\
+    Spectral penalty weight $\lambda$ (LSTM-Spec) & 0.01 \\
+    Spectral threshold & 0.95 \\
+    Power iterations for $\rho(M)$ & 10 \\[4pt]
+    \multicolumn{2}{l}{\emph{Data split}} \\[2pt]
+    Train / Validation / Test & 60\% / 20\% / 20\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Batch Inventory}
+\label{sec:appendix:batches}
+
+Table~\ref{tab:benchmark_inventory} lists all experiment batches in the
+results directory. For each patient count, the batch-selection rule
+(Section~\ref{sec:batch}) selects the batch with the most complete coverage.
+Partial batches from development runs are retained but excluded from the
+reported figures and tables.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Inventory of benchmark batches. The selected batch for each patient
+  count is the most complete batch available.}
+  \label{tab:benchmark_inventory}
+  \begin{tabular}{llrrrl}
+    \toprule
+    Patients & Batch & Records & Unique triples & Systems & Selected \\
+    \midrule
+    100 & 2026-07-16\_08-11-32 & 60 & 60 & 3 & yes \\
+    200 & 2026-07-16\_08-11-59 & 60 & 60 & 3 & yes \\
+    300 & 2026-07-16\_08-08-14 & 6 & 6 & 1 & no \\
+    300 & 2026-07-16\_08-12-57 & 60 & 60 & 3 & yes \\
+    400 & 2026-07-16\_08-08-39 & 3 & 3 & 1 & no \\
+    400 & 2026-07-16\_08-13-29 & 60 & 60 & 3 & yes \\
+    500 & 2026-07-16\_08-13-49 & 60 & 60 & 3 & yes \\
+    \bottomrule
+  \end{tabular}
+\end{table}

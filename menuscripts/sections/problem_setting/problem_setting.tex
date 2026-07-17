@@ -1,66 +1,159 @@
 \section{Problem Setting and Benchmark Definition}
 \label{sec:problem}
 
-% This section defines exactly what is being evaluated.
-% It is aligned with the formal definition in
-% \texttt{docs/definition/formal\_definition.md}.
+We evaluate early-warning detectors on simulated trajectory data from three
+dynamical systems. Each detector receives a trajectory and produces a score
+sequence. The score at time \(t\), denoted \(p_{i,t}\), is interpreted as the
+detector's warning score for trajectory \(i\). Higher values indicate stronger
+evidence for an approaching transition.
+
+The benchmark is defined to compare observer behavior across regimes rather
+than to select a single global winner. All reported comparisons use the same
+systems, patient-count settings, seed order, thresholding rule, and evaluation
+metrics.
 
 \subsection{Dynamical Systems}
 \label{sec:systems}
 
-% Three systems:
-% \begin{description}
-%   \item[Fold bifurcation]  -- describe transition mechanism and test-case value
-%   \item[Hopf bifurcation]  -- describe transition mechanism and test-case value
-%   \item[Logistic (period-doubling) bifurcation] -- describe transition mechanism
-%         and test-case value
-% \end{description}
-% For each system, state the qualitative transition mechanism and why it is a
-% distinct test case.
+The benchmark contains three synthetic systems.
+
+\begin{description}[leftmargin=*]
+  \item[Fold.]
+  The fold system represents a collapse-like transition in which a stable state
+  is lost as the control condition changes. It tests whether an observer can
+  detect gradual loss of stability without relying on oscillatory structure.
+
+  \item[Hopf.]
+  The Hopf system represents an oscillatory instability. It tests whether an
+  observer can use temporal structure associated with changing stability and
+  emerging oscillatory behavior.
+
+  \item[Logistic.]
+  The logistic system represents a discrete-time transition with
+  period-doubling behavior. It tests whether an observer calibrated on
+  continuous warning scores also behaves well for map-like dynamics.
+\end{description}
+
+These systems are not treated as interchangeable datasets. They are distinct
+test cases for the same observer family.
 
 \subsection{Trajectory Data and Patient Counts}
 \label{sec:data}
 
-% Patient counts: 100, 200, 300, 400, 500.
-% Seed order: 101, 202, 303, 404, 505, 606, 707, 808, 909, 1010.
-% Signal and null trajectories, train/validation/test split logic.
+For each system, the benchmark contains signal trajectories and null
+trajectories. Signal trajectories contain a transition with a bifurcation time
+\(\tau_i\). Null trajectories provide non-transition examples for
+false-positive evaluation.
+
+The patient count denotes the number of simulated trajectories used in a
+benchmark condition. The finalized patient-count settings are
+\[
+  n \in \{100, 200, 300, 400, 500\}.
+\]
+For each patient count, system, and observer variant, results are aggregated
+over the following ten seeds:
+\[
+  101, 202, 303, 404, 505, 606, 707, 808, 909, 1010.
+\]
+
+The finalized reporting pipeline compares two learned observer variants:
+\(\text{Kalman-BCE}\) and \(\text{Kalman-LSTM-Spec}\). Each method produces
+test scores \(p_{i,t} \in [0,1]\), which are used for threshold selection,
+detection-time computation, early-warning AUC, and false-positive evaluation.
 
 \subsection{Batch Selection}
 \label{sec:batch}
 
-% Deterministic rule for selecting the most complete batch per patient count.
-% Prevents reviewers from thinking partial reruns were hand-selected.
+The experiment directory can contain multiple batches for the same patient
+count, including partial reruns. To avoid manual selection, the analysis uses a
+deterministic batch-selection rule. For each patient count \(n\), let
+\(\mathcal{B}_n\) be the set of available batches. The selected batch is the
+batch that maximizes, in order:
+
+\begin{enumerate}[leftmargin=*]
+  \item the number of unique \((\text{system}, \text{method}, \text{seed})\)
+        triples,
+  \item the number of systems represented,
+  \item the total number of result records,
+  \item and the timestamp, if the preceding quantities are tied.
+\end{enumerate}
+
+This rule keeps the most complete batch for each patient count and excludes
+partial reruns from the main figures and tables.
 
 \subsection{Evaluation Metrics}
 \label{sec:metrics}
 
-% Detection time (Section~\ref{sec:metrics:dt}),
-% early-warning AUC (Section~\ref{sec:metrics:auc}),
-% false-positive rate (Section~\ref{sec:metrics:fpr}),
-% threshold selection (Section~\ref{sec:metrics:threshold}).
-% Use the formal definitions already finalized.
+The benchmark reports three metrics: detection time, early-warning AUC, and
+false-positive rate. The metrics measure different properties of the same score
+sequence and should not be collapsed into a single ordering.
 
 \subsubsection{Detection Time}
 \label{sec:metrics:dt}
 
-% DT_i = tau_i - a_i where a_i = min{t < tau_i : p_{i,t} >= theta}.
-% Mean over trajectories with at least one pre-bifurcation alert.
+For a positive trajectory \(i\) with bifurcation time \(\tau_i\), define the
+first pre-bifurcation alert time as
+\[
+  a_i = \min \{t : 0 \leq t < \tau_i,\; p_{i,t} \geq \theta \},
+\]
+where \(\theta\) is the decision threshold. If such an alert exists, the
+trajectory-level detection time is
+\[
+  DT_i = \tau_i - a_i.
+\]
+The reported detection time is the mean of \(DT_i\) over positive trajectories
+with at least one pre-bifurcation alert. Trajectories without a pre-bifurcation
+alert are omitted from this mean rather than counted as zero-lead detections.
 
 \subsubsection{Early-Warning AUC}
 \label{sec:metrics:auc}
 
-% e_i = max{p_{i,t} : max(0, tau_i - 50) <= t < tau_i - 5}
-% n_j = max{p_{j,t} : max(0, T_j - 50) <= t < T_j - 5}
-% ROC AUC from {e_i} and {n_j}.
+For each positive trajectory, the early-warning score is the maximum model
+score in a window before the bifurcation:
+\[
+  e_i = \max \{p_{i,t} : \max(0,\tau_i - 50) \leq t < \tau_i - 5\}.
+\]
+For each null trajectory \(j\) with sequence length \(T_j\), the corresponding
+score is computed over the terminal part of the sequence:
+\[
+  n_j = \max \{p_{j,t} : \max(0,T_j - 50) \leq t < T_j - 5\}.
+\]
+The early-warning AUC is the ROC AUC computed from the pooled signal scores
+\(\{e_i\}\) and null scores \(\{n_j\}\), with labels one for signal and zero
+for null.
 
 \subsubsection{False Positive Rate}
 \label{sec:metrics:fpr}
 
-% Per-time-step alert rate on null sequences.
+False-positive rate is computed on null trajectories as a per-time-step alert
+rate:
+\[
+  FPR =
+  \frac{\sum_j \sum_{t=0}^{T_j-1} \mathbf{1}[p_{j,t} \geq \theta]}
+       {\sum_j T_j}.
+\]
+This quantity measures the fraction of null time steps that would trigger an
+alert. It is not a per-trajectory false-positive probability.
 
 \subsubsection{Threshold Selection}
 \label{sec:metrics:threshold}
 
-% Validation-based threshold via Youden's J statistic with 0.80 sensitivity
-% guard. Positive window: [tau - 60, tau). Negative window:
-% [0, max(0, tau - 121)). Fallback 0.5 if only one class or constant scores.
+Thresholds are selected on the validation split before test evaluation. For a
+positive validation trajectory, scores in the window
+\[
+  \max(0,\tau_i - 60) \leq t < \tau_i
+\]
+are labeled positive. Scores from the early pre-bifurcation region
+\[
+  0 \leq t < \max(\max(0,\tau_i - 120) - 1, 0)
+\]
+are labeled negative. If null validation scores are supplied, their first 120
+time steps are also labeled negative. In the finalized benchmark runs reported
+here, threshold selection for the two learned observer variants uses the signal
+validation trajectories.
+
+The threshold is selected from the validation ROC curve by maximizing Youden's
+statistic \citep{youden1950index}, \(J = TPR - FPR\). If the sensitivity at that threshold is below
+0.80, the selected threshold is the one whose sensitivity is closest to 0.80.
+If the validation labels contain only one class, or if the validation scores are
+effectively constant, the fallback threshold is 0.5.

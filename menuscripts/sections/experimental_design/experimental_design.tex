@@ -1,38 +1,54 @@
 \section{Experimental Design}
 \label{sec:design}
 
-% Explain the experimental comparisons before showing results.
+This section describes the comparisons reported in the main results. Evaluation
+metrics, threshold selection, and batch selection are defined in
+Section~\ref{sec:problem}.
 
 \subsection{Main Benchmark}
 \label{sec:design:main}
 
-% Compare methods across systems, patient counts, seeds, and metrics.
-% Main artifacts:
-% - Table~1: 500-patient benchmark summary
-% - Table~2: patient-count sweep
-% - Figure~1: patient-depth response
+The primary comparison evaluates Kalman-BCE and Kalman-LSTM-Spec across all
+three systems at five patient counts (100, 200, 300, 400, 500), each with ten
+seeds. This produces 60~runs per patient count:
+\(3\;\text{systems} \times 2\;\text{methods} \times 10\;\text{seeds}\).
+
+Table~\ref{tab:benchmark_500} reports the 500-patient results: mean and
+standard deviation of detection time, early-warning AUC, and false-positive rate
+across seeds, listed per system and method. Table~\ref{tab:benchmark_sweep}
+extends this to all five patient counts.
+
+Figure~\ref{fig:patient_sweep} plots detection time and early-warning AUC as a
+function of patient count, with separate panels per system. This tests whether
+performance changes with training set size and whether the two variants respond
+differently to that change.
 
 \subsection{Trajectory-Level Behavior}
 \label{sec:design:trajectory}
 
-% Representative trajectories showing how score sequences behave before
-% bifurcation.
-% Main artifact: Figure~2.
+Figure~\ref{fig:trajectory_panels} shows representative test trajectories from
+each system alongside the corresponding observer score sequences. The panels
+display how scores rise in the pre-bifurcation region for signal trajectories
+and stay flat for null trajectories. A method with high detection time should
+show early score rises in these panels; a method with low false-positive rate
+should produce near-zero scores on null sequences.
 
 \subsection{Training Behavior}
 \label{sec:design:training}
 
-% Training curves only if they support a concrete point about stability,
-% convergence, or regime dependence.
-% Main artifact: Figure~3.
+Figure~\ref{fig:training_curves} plots training and validation loss curves for
+both variants at the 500-patient setting. These curves confirm that training
+converges within the allotted 50~epochs and show whether early stopping
+activates at a consistent epoch or varies across seeds.
 
-\subsection{Supplementary or Exploratory Comparisons}
+\subsection{Supplementary and Exploratory Comparisons}
 \label{sec:design:supplementary}
 
-% Older exploratory methods and ablations treated carefully:
-% - classical indicators
-% - EWS augmentation experiments
-% - null-training experiments
-% - additional observer variants
-% - high-noise or stress-test runs
-% Do not mix exploratory single-seed results into the main claims.
+Several comparisons are excluded from the main tables. Classical early-warning
+indicators (lag-1 autocorrelation, rolling variance) were evaluated during
+development but use a different scoring pipeline and are not included in the
+finalized benchmark. Ablation experiments---EWS-augmented input features,
+auxiliary spectral heads, null-training configurations---were run with fewer
+seeds or on a subset of systems. These results are retained in the experiment
+directory for reference but are not mixed into the main claims, which report
+only the two observer variants across the complete seed and system grid.
