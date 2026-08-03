@@ -1,2 +1,8 @@
 latent_dim: 4
 lstm_dim: 8
+spectral_drift:
+  n_particles: 500
+  c_min: 0.001
+  delta: 0.05
+  center_window: 50
+  q_drift_grid: [1.0e-6, 1.0e-5, 1.0e-4, 1.0e-3, 1.0e-2, 1.0e-1]

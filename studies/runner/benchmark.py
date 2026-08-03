@@ -36,6 +36,12 @@ for p in (str(_SRC), str(_ROOT)):
 from csd_observer.config.load import load_config  # noqa: E402
 from csd_observer.data.bifurcation import build_dataset  # noqa: E402
 from csd_observer.models.kalman_lag2 import ClassicalKalmanLag2, grid_search_q  # noqa: E402
+from csd_observer.models.spectral_drift import (  # noqa: E402
+    SpectralDriftObserver,
+    extract_mode,
+    grid_search_q_drift,
+    running_mean_center,
+)
 from csd_observer.training.trainer import (  # noqa: E402
     TensorizedDataset,
     build_probs,
@@ -69,6 +75,7 @@ METHODS = (
     "Kalman-Lag2-Net",
     "Kalman-ACKO",
     "Kalman-LSTM-Aug",
+    "Kalman-Spectral-Drift",
 )
 
 
@@ -133,6 +140,10 @@ def _compute_per_traj_dts(
 
 
 _SYSTEM_BUILDERS = {"fold": "fold", "hopf": "hopf", "logistic": "logistic"}
+
+# Observation-noise standard deviation per system, matching the class defaults
+# in csd_observer/data/bifurcation.py (fold 0.10, hopf 0.15, logistic 0.05).
+_OBS_NOISE_DEFAULT = {"fold": 0.10, "hopf": 0.15, "logistic": 0.05}
 
 
 def _build_dataset_for_system(
@@ -555,6 +566,110 @@ def _run_synthetic_experiment(
             **kl2_metrics,
             "threshold": thresh_kl2,
             "n_epochs_trained": 0,
+        })
+
+    # --- Kalman-Spectral-Drift (Rao-Blackwellised spectral-gap observer) ---
+    if _enabled("Kalman-Spectral-Drift"):
+        sd_cfg = config.get("model", {}).get("spectral_drift", {})
+        n_particles = int(sd_cfg.get("n_particles", 500))
+        c_min = float(sd_cfg.get("c_min", 1e-3))
+        delta = float(sd_cfg.get("delta", 0.05))
+        center_window = int(sd_cfg.get("center_window", 50))
+        q_grid = [float(q) for q in sd_cfg.get("q_drift_grid", [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1])]
+        sigma_u = float(data_cfg.get("noise_scale", 0.15))
+        obs_noise = float(data_cfg.get("obs_noise_scale") or _OBS_NOISE_DEFAULT[system])
+        r_var = obs_noise ** 2
+
+        # Extract the scalar dominant mode and centre it (running mean).
+        mode_sig = extract_mode(arrays_signal["features"], system)
+        mode_null = extract_mode(arrays_null["features"], system)
+        mode_sig = running_mean_center(mode_sig, arrays_signal["seq_lengths"], center_window)
+        mode_null = running_mean_center(mode_null, arrays_null["seq_lengths"], center_window)
+
+        # Grid-search Q_drift on the validation split (signal + null).
+        best_q_sd = grid_search_q_drift(
+            mode_sig[val_idx_s],
+            mode_null[val_idx_n],
+            arrays_signal["bifurcation_times"][val_idx_s],
+            arrays_signal["seq_lengths"][val_idx_s],
+            arrays_null["seq_lengths"][val_idx_n],
+            sigma_u=sigma_u,
+            r=r_var,
+            q_grid=q_grid,
+            n_particles=n_particles,
+            c_min=c_min,
+            delta=delta,
+            device=device,
+        )
+
+        observer_sd = SpectralDriftObserver(
+            sigma_u=sigma_u,
+            r=r_var,
+            q_drift=best_q_sd,
+            n_particles=n_particles,
+            c_min=c_min,
+            delta=delta,
+        ).to(device)
+        observer_sd.eval()
+
+        def _collapse_probs(mode: np.ndarray) -> np.ndarray:
+            x = torch.from_numpy(np.asarray(mode, dtype=np.float32)).to(device)
+            with torch.no_grad():
+                return observer_sd(x)["collapse_prob"].cpu().numpy()
+
+        probs_test_sd = _collapse_probs(mode_sig[test_idx_s])
+        probs_null_sd = _collapse_probs(mode_null[test_idx_n])
+        probs_val_sd = _collapse_probs(mode_sig[val_idx_s])
+
+        thresh_sd = select_threshold(
+            probs_val_sd,
+            arrays_signal["bifurcation_times"][val_idx_s],
+            arrays_signal["is_positive"][val_idx_s],
+            arrays_signal["seq_lengths"][val_idx_s],
+        )
+
+        dt_sd = compute_detection_time(
+            probs_test_sd, arrays_signal["bifurcation_times"][test_idx_s],
+            arrays_signal["is_positive"][test_idx_s],
+            arrays_signal["seq_lengths"][test_idx_s], thresh_sd,
+        )
+        ewa_sd = compute_early_warning_auc(
+            probs_test_sd, arrays_signal["bifurcation_times"][test_idx_s],
+            arrays_signal["is_positive"][test_idx_s],
+            arrays_signal["seq_lengths"][test_idx_s],
+            probs_null_sd, arrays_null["seq_lengths"][test_idx_n],
+        )
+        null_m_sd = compute_null_metrics(probs_null_sd, thresh_sd, arrays_null["seq_lengths"][test_idx_n])
+        per_traj_dts_sd = _compute_per_traj_dts(
+            probs_test_sd,
+            arrays_signal["bifurcation_times"][test_idx_s],
+            arrays_signal["is_positive"][test_idx_s],
+            arrays_signal["seq_lengths"][test_idx_s],
+            thresh_sd,
+        )
+        writer.write_trajectory_data(
+            system, "Kalman-Spectral-Drift", 0,
+            probs_test=probs_test_sd,
+            probs_null=probs_null_sd,
+            probs_val=probs_val_sd,
+            bifurcation_times=arrays_signal["bifurcation_times"][test_idx_s],
+            bifurcation_times_null=arrays_null["bifurcation_times"][test_idx_n],
+            seq_lengths=arrays_signal["seq_lengths"][test_idx_s],
+            seq_lengths_null=arrays_null["seq_lengths"][test_idx_n],
+            threshold=np.array([thresh_sd]),
+            detection_times=np.array(per_traj_dts_sd, dtype=np.float32),
+        )
+
+        sd_metrics = {
+            "detection_time": dt_sd, "ew_auc": ewa_sd, **null_m_sd,
+        }
+        runs.append(RunResult(method="Kalman-Spectral-Drift", seed=0, metrics=sd_metrics))
+        writer.write_result_row({
+            "system": system, "seed": 0, "method": "Kalman-Spectral-Drift",
+            **sd_metrics,
+            "threshold": thresh_sd,
+            "n_epochs_trained": 0,
+            "q_drift": best_q_sd,
         })
 
     # --- Kalman-Lag2-Net (learned MLP head on top of Kalman) ---
