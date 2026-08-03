@@ -620,13 +620,21 @@ def _run_synthetic_experiment(
         probs_test_sd = _collapse_probs(mode_sig[test_idx_s])
         probs_null_sd = _collapse_probs(mode_null[test_idx_n])
         probs_val_sd = _collapse_probs(mode_sig[val_idx_s])
+        probs_val_null_sd = _collapse_probs(mode_null[val_idx_n])
 
-        thresh_sd = select_threshold(
-            probs_val_sd,
-            arrays_signal["bifurcation_times"][val_idx_s],
-            arrays_signal["is_positive"][val_idx_s],
-            arrays_signal["seq_lengths"][val_idx_s],
+        # Calibrate the alarm threshold to a target false-positive rate
+        # against null trajectories (formal definition, section 5: fixed-FPR
+        # rule). The Youden rule degenerates for posterior-probability alarms:
+        # the collapse probability carries a prior floor at t=0, so a
+        # sensitivity-maximising threshold fires on most null steps.
+        fpr_target = float(sd_cfg.get("fpr_target", 0.05))
+        null_steps = np.concatenate(
+            [
+                probs_val_null_sd[i, : int(length)]
+                for i, length in enumerate(arrays_null["seq_lengths"][val_idx_n])
+            ]
         )
+        thresh_sd = float(np.percentile(null_steps, 100.0 * (1.0 - fpr_target)))
 
         dt_sd = compute_detection_time(
             probs_test_sd, arrays_signal["bifurcation_times"][test_idx_s],
