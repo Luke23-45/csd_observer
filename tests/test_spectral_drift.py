@@ -8,6 +8,7 @@ validation-based grid search over ``Q_drift``.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import torch
 
 
@@ -257,3 +258,105 @@ def test_grid_search_q_drift_prefers_working_q() -> None:
         n_particles=100,
     )
     assert best_q in [1e-4, 1e-3, 1e-2]
+
+
+def test_grid_search_sigma_u_q_drift_returns_grid_values() -> None:
+    """Joint (sigma_u, q) search must return members of both grids."""
+    from csd_observer.models.spectral_drift import grid_search_sigma_u_q_drift
+    B, T = 10, 100
+    rng = np.random.default_rng(42)
+    y_sig = rng.normal(0, 0.1, (B, T)).astype(np.float32)
+    y_null = rng.normal(0, 0.1, (B, T)).astype(np.float32)
+    bifs = np.full(B, 70.0, dtype=np.float32)
+    lens = np.full(B, T, dtype=np.int64)
+    s_grid = [0.15, 0.3, 0.6]
+    q_grid = [1e-6, 1e-4, 1e-2]
+    best_sigma_u, best_q = grid_search_sigma_u_q_drift(
+        y_sig, y_null, bifs, lens, lens,
+        sigma_u_grid=s_grid, r=0.01, q_grid=q_grid, n_particles=100,
+    )
+    assert best_sigma_u in s_grid
+    assert best_q in q_grid
+
+
+def test_grid_search_sigma_u_q_drift_single_sigma_matches_q_only() -> None:
+    """With a one-element sigma grid the joint search must equal the
+    q-only search (they share the same implementation)."""
+    from csd_observer.models.spectral_drift import (
+        grid_search_q_drift,
+        grid_search_sigma_u_q_drift,
+    )
+    B, T = 8, 120
+    rng = np.random.default_rng(7)
+    y_sig = rng.normal(0, 0.05, (B, T)).astype(np.float32)
+    ramp = np.linspace(1.0, 3.0, T).astype(np.float32)
+    y_sig = y_sig * ramp[None, :]
+    y_null = rng.normal(0, 0.05, (B, T)).astype(np.float32)
+    bifs = np.full(B, T - 20.0, dtype=np.float32)
+    lens = np.full(B, T, dtype=np.int64)
+    q_grid = [1e-4, 1e-3, 1e-2]
+    best_q = grid_search_q_drift(
+        y_sig, y_null, bifs, lens, lens,
+        sigma_u=0.15, r=0.01, q_grid=q_grid, n_particles=100,
+    )
+    best_sigma_u, best_q_joint = grid_search_sigma_u_q_drift(
+        y_sig, y_null, bifs, lens, lens,
+        sigma_u_grid=[0.15], r=0.01, q_grid=q_grid, n_particles=100,
+    )
+    assert best_sigma_u == 0.15
+    assert best_q_joint == best_q
+
+
+def test_grid_search_sigma_u_q_drift_rejects_bad_grids() -> None:
+    """Empty or non-positive sigma grids must raise ValueError."""
+    from csd_observer.models.spectral_drift import grid_search_sigma_u_q_drift
+    B, T = 4, 50
+    rng = np.random.default_rng(1)
+    y = rng.normal(0, 0.1, (B, T)).astype(np.float32)
+    bifs = np.full(B, 40.0, dtype=np.float32)
+    lens = np.full(B, T, dtype=np.int64)
+    for bad in ([], [0.0], [-0.1, 0.2], [0.15, 0.0]):
+        with pytest.raises(ValueError):
+            grid_search_sigma_u_q_drift(
+                y, y, bifs, lens, lens,
+                sigma_u_grid=bad, r=0.01, q_grid=[1e-3], n_particles=50,
+            )
+
+
+def test_grid_search_sigma_u_q_drift_prefers_matched_noise_scale() -> None:
+    """On the real logistic data the model's per-step noise sigma_u is ~2x
+    smaller than the true innovation scale: the mis-specified scale makes
+    null trajectories look collapsed (variance misattributed to a small
+    gap c), which depresses the validation EW-AUC. The joint search must
+    pick the matched scale (0.3) over the mis-specified one (0.15)."""
+    from csd_observer.data.bifurcation import build_dataset
+    from csd_observer.models.spectral_drift import (
+        extract_mode,
+        grid_search_sigma_u_q_drift,
+        running_mean_center,
+    )
+    sig = build_dataset(
+        "logistic", n_trajectories=100, max_length=200, noise_scale=0.15,
+        obs_noise_scale=None, seed=101, null=False,
+    )
+    nul = build_dataset(
+        "logistic", n_trajectories=100, max_length=200, noise_scale=0.15,
+        obs_noise_scale=None, seed=202, null=True,
+    )
+    vs = sig["split_indices"]["val"]
+    vn = nul["split_indices"]["val"]
+    ms = running_mean_center(
+        extract_mode(sig["features"], "logistic"), sig["seq_lengths"], 50
+    )
+    mn = running_mean_center(
+        extract_mode(nul["features"], "logistic"), nul["seq_lengths"], 50
+    )
+    best_sigma_u, best_q = grid_search_sigma_u_q_drift(
+        ms[vs], mn[vn],
+        sig["bifurcation_times"][vs], sig["seq_lengths"][vs],
+        nul["seq_lengths"][vn],
+        sigma_u_grid=[0.15, 0.3], r=0.05 ** 2, q_grid=[1e-3],
+        n_particles=200, c_min=1e-3, delta=0.05,
+    )
+    assert best_sigma_u == 0.3
+    assert best_q == 1e-3

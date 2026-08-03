@@ -39,7 +39,7 @@ from csd_observer.models.kalman_lag2 import ClassicalKalmanLag2, grid_search_q  
 from csd_observer.models.spectral_drift import (  # noqa: E402
     SpectralDriftObserver,
     extract_mode,
-    grid_search_q_drift,
+    grid_search_sigma_u_q_drift,
     running_mean_center,
 )
 from csd_observer.training.trainer import (  # noqa: E402
@@ -576,7 +576,7 @@ def _run_synthetic_experiment(
         delta = float(sd_cfg.get("delta", 0.05))
         center_window = int(sd_cfg.get("center_window", 50))
         q_grid = [float(q) for q in sd_cfg.get("q_drift_grid", [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1])]
-        sigma_u = float(data_cfg.get("noise_scale", 0.15))
+        sigma_u_grid = [float(s) for s in sd_cfg.get("sigma_u_grid", [0.15, 0.3, 0.6, 1.0])]
         obs_noise = float(data_cfg.get("obs_noise_scale") or _OBS_NOISE_DEFAULT[system])
         r_var = obs_noise ** 2
 
@@ -586,14 +586,18 @@ def _run_synthetic_experiment(
         mode_sig = running_mean_center(mode_sig, arrays_signal["seq_lengths"], center_window)
         mode_null = running_mean_center(mode_null, arrays_null["seq_lengths"], center_window)
 
-        # Grid-search Q_drift on the validation split (signal + null).
-        best_q_sd = grid_search_q_drift(
+        # Grid-search (sigma_u, Q_drift) on the validation split (signal +
+        # null). The per-step noise scale sigma_u is a free hyperparameter:
+        # fixing it to noise_scale mis-specifies the innovation variance by
+        # up to ~6x on some systems, which degrades the alarm (see
+        # docs/notes/spectral_drift_diagnosis.md).
+        best_sigma_u_sd, best_q_sd = grid_search_sigma_u_q_drift(
             mode_sig[val_idx_s],
             mode_null[val_idx_n],
             arrays_signal["bifurcation_times"][val_idx_s],
             arrays_signal["seq_lengths"][val_idx_s],
             arrays_null["seq_lengths"][val_idx_n],
-            sigma_u=sigma_u,
+            sigma_u_grid=sigma_u_grid,
             r=r_var,
             q_grid=q_grid,
             n_particles=n_particles,
@@ -603,7 +607,7 @@ def _run_synthetic_experiment(
         )
 
         observer_sd = SpectralDriftObserver(
-            sigma_u=sigma_u,
+            sigma_u=best_sigma_u_sd,
             r=r_var,
             q_drift=best_q_sd,
             n_particles=n_particles,
@@ -678,6 +682,7 @@ def _run_synthetic_experiment(
             "threshold": thresh_sd,
             "n_epochs_trained": 0,
             "q_drift": best_q_sd,
+            "sigma_u": best_sigma_u_sd,
         })
 
     # --- Kalman-Lag2-Net (learned MLP head on top of Kalman) ---
