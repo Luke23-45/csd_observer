@@ -162,7 +162,7 @@ def train_kalman(
     train_idx: np.ndarray,
     val_idx: np.ndarray,
     *,
-    loss_type: Literal["bce", "lstm", "lstm_spec", "lstm_aux", "parity"],
+    loss_type: Literal["bce", "lstm", "lstm_spec", "lstm_aux", "parity", "bce_spec"],
     seed: int,
     config: dict,
     device: torch.device,
@@ -170,7 +170,7 @@ def train_kalman(
     epoch_logger: Optional[List[Dict]] = None,
 ) -> CSDKalmanObserver:
     use_lstm = loss_type in ("lstm", "lstm_spec", "lstm_aux")
-    use_spec = loss_type == "lstm_spec"
+    use_spec = loss_type in ("lstm_spec", "bce_spec")
     use_aux = loss_type == "lstm_aux"
     use_parity = loss_type == "parity"
     n_features = tensors.features.shape[-1]

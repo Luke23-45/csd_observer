@@ -21,6 +21,8 @@ _PATIENT_RE = re.compile(r"patients_(\d+)")
 _METHOD_FILE_MAP = {
     "Kalman-BCE": "kalman_bce",
     "Kalman-LSTM-Spec": "kalman_lstm_spec",
+    "Kalman-LSTM": "kalman_lstm",
+    "Kalman-BCE-Spec": "kalman_bce_spec",
 }
 
 

@@ -8,7 +8,7 @@ from typing import Dict, Tuple
 
 PATIENT_COUNTS: Tuple[int, ...] = (100, 200, 300, 400, 500)
 SYSTEMS: Tuple[str, ...] = ("fold", "hopf", "logistic")
-METHODS: Tuple[str, ...] = ("Kalman-BCE", "Kalman-LSTM-Spec")
+METHODS: Tuple[str, ...] = ("Kalman-BCE", "Kalman-LSTM-Spec", "Kalman-LSTM", "Kalman-BCE-Spec")
 
 SEED_ORDER: Tuple[int, ...] = (101, 202, 303, 404, 505, 606, 707, 808, 909, 1010)
 

@@ -16,6 +16,7 @@ Output:
 from __future__ import annotations
 
 import copy
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -63,6 +64,7 @@ METHODS = (
     "Raw-CSD", "RunningVar",
     "Lag2-CSD", "Lag2-CSD-detrended",
     "Kalman-Lag2", "Kalman-BCE",
+    "Kalman-BCE-Spec",
     "Kalman-LSTM", "Kalman-LSTM-Spec",
     "Kalman-Lag2-Net",
     "Kalman-ACKO",
@@ -331,6 +333,7 @@ def _run_synthetic_experiment(
 
     methods_list = [
         ("Kalman-BCE", "bce"),
+        ("Kalman-BCE-Spec", "bce_spec"),
         ("Kalman-LSTM", "lstm"),
         ("Kalman-LSTM-Spec", "lstm_spec"),
         ("Kalman-ACKO", "parity"),
@@ -753,7 +756,7 @@ def _run_single(run_name: str, n_seeds_override: Optional[int] = None, enabled_m
           f"epochs={config.get('training', {}).get('epochs')}")
     print()
 
-    writer = OutputWriter(experiment_name=f"benchmark/{run_name}")
+    writer = OutputWriter(experiment_name=f"{os.environ.get('CSD_EXPERIMENT_PREFIX', 'benchmark')}/{run_name}")
     writer.write_config(config)
     print(f"Output: {writer.path}\n")
 
