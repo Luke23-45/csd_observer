@@ -94,6 +94,129 @@ def test_build_dataset_invalid_system() -> None:
         build_dataset("nonexistent")
 
 
+def test_build_dataset_invalid_generator() -> None:
+    import pytest
+
+    from csd_observer.data.bifurcation import build_dataset
+    with pytest.raises(ValueError, match="Unknown generator"):
+        build_dataset("fold", generator="nope")
+
+
+def test_build_dataset_bury_shapes() -> None:
+    from csd_observer.data.bifurcation import build_dataset
+    for system, channels in (("fold", 1), ("hopf", 2), ("logistic", 1)):
+        data = build_dataset(
+            system, generator="bury", n_trajectories=30, max_length=60,
+            noise_scale=0.1, seed=7,
+        )
+        assert data["features"].shape == (30, 60, channels)
+        assert data["features"].shape == data["true_states"].shape
+        assert data["seq_lengths"].shape == (30,)
+        assert data["is_positive"].all()
+
+
+def test_build_dataset_bury_varying_bifurcation_times() -> None:
+    from csd_observer.data.bifurcation import build_dataset
+    data = build_dataset("fold", generator="bury", n_trajectories=100, max_length=80, seed=3)
+    bifs = data["bifurcation_times"]
+    assert np.ptp(bifs) > 5.0
+    assert bifs.min() >= 0.0
+    assert bifs.max() <= 80.0
+
+
+def test_build_dataset_bury_varying_starts_and_noise() -> None:
+    from csd_observer.data.bifurcation import build_dataset
+    data = build_dataset("fold", generator="bury", n_trajectories=60, max_length=80, seed=11)
+    assert np.ptp(data["r_values"][:, 0]) > 0.05
+    per_traj_std = np.std(data["features"][:, :, 0], axis=1)
+    assert np.ptp(per_traj_std) > 1e-4
+
+
+def test_build_dataset_bury_null() -> None:
+    from csd_observer.data.bifurcation import build_dataset
+    data = build_dataset("fold", generator="bury", n_trajectories=20, max_length=50, seed=3, null=True)
+    assert not data["is_positive"].any()
+    assert (data["bifurcation_times"] == 51.0).all()
+    assert np.ptp(data["r_values"][:, 0]) > 0.05
+
+
+def test_build_dataset_bury_deterministic() -> None:
+    from csd_observer.data.bifurcation import build_dataset
+    a = build_dataset("fold", generator="bury", n_trajectories=10, max_length=40, seed=5)
+    b = build_dataset("fold", generator="bury", n_trajectories=10, max_length=40, seed=5)
+    assert np.array_equal(a["features"], b["features"])
+    assert np.array_equal(a["bifurcation_times"], b["bifurcation_times"])
+    assert np.array_equal(a["r_values"], b["r_values"])
+
+
+def test_build_dataset_hard_shapes() -> None:
+    from csd_observer.data.bifurcation import build_dataset
+    for system, channels in (("fold", 1), ("hopf", 2), ("logistic", 1)):
+        data = build_dataset(
+            system, generator="bury", difficulty="hard", n_trajectories=30,
+            max_length=60, noise_scale=0.1, seed=7,
+        )
+        assert data["features"].shape == (30, 60, channels)
+        assert data["features"].shape == data["true_states"].shape
+        assert data["seq_lengths"].shape == (30,)
+
+
+def test_build_dataset_hard_signals_cross() -> None:
+    from csd_observer.data.bifurcation import build_dataset
+    for system in ("fold", "hopf", "logistic"):
+        data = build_dataset(
+            system, generator="bury", difficulty="hard", n_trajectories=120,
+            max_length=200, seed=3,
+        )
+        assert data["is_positive"].all()
+        bifs = data["bifurcation_times"]
+        assert (bifs > 0.0).all()
+        assert (bifs < 200.0).all()
+        assert np.ptp(bifs) > 5.0
+
+
+def test_build_dataset_hard_null_sentinels() -> None:
+    from csd_observer.data.bifurcation import build_dataset
+    data = build_dataset(
+        "fold", generator="bury", difficulty="hard", n_trajectories=120,
+        max_length=200, seed=3, null=True,
+    )
+    assert not data["is_positive"].any()
+    assert (data["bifurcation_times"] == 201.0).all()
+
+
+def test_build_dataset_hard_co_moving_nulls() -> None:
+    from csd_observer.data.bifurcation import build_dataset
+    n = build_dataset(
+        "logistic", generator="bury", difficulty="hard", n_trajectories=300,
+        max_length=200, seed=5, null=True,
+    )
+    ends = n["mu_values"][:, -1]
+    assert (ends > 2.85).sum() > 10
+    assert (ends < 3.0).all()
+    s = build_dataset(
+        "logistic", generator="bury", difficulty="hard", n_trajectories=300,
+        max_length=200, seed=5,
+    )
+    assert (s["mu_values"][:, -1] > 3.0).all()
+
+
+def test_build_dataset_hard_deterministic() -> None:
+    from csd_observer.data.bifurcation import build_dataset
+    a = build_dataset("fold", generator="bury", difficulty="hard", n_trajectories=10, max_length=40, seed=5)
+    b = build_dataset("fold", generator="bury", difficulty="hard", n_trajectories=10, max_length=40, seed=5)
+    assert np.array_equal(a["features"], b["features"])
+    assert np.array_equal(a["bifurcation_times"], b["bifurcation_times"])
+
+
+def test_build_dataset_invalid_difficulty() -> None:
+    import pytest
+
+    from csd_observer.data.bifurcation import build_dataset
+    with pytest.raises(ValueError, match="Unknown difficulty"):
+        build_dataset("fold", generator="bury", difficulty="nope")
+
+
 def test_load_config() -> None:
     from csd_observer.config.load import load_config
     config = load_config("default")

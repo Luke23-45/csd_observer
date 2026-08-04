@@ -50,6 +50,17 @@ Observations:
 
 > **Method rows updated 2026-08-03 after the σ_u fix (§5.1).** Learned
 > baseline rows are unchanged from the original cloud run.
+>
+> **2026-08-04 correction:** the §3.1 fold rows below were measured on
+> **degenerate generator data** — classic `FoldBifurcationDataset` wrote
+> `x[t] = x_i` (the t-th row of *all* trajectories) instead of `x[i, t]`,
+> so all 500 "trajectories" were copies of one series, and the fold's
+> explicit-Euler (`dt=1`) integration was numerically unstable for r>1,
+> pinning most trajectories on the ±5 clip. Both bugs are fixed
+> (see `docs/research/synthetic_data_survey.md` §3). **Honest classic
+> fold (post-fix, patients_100, n_seeds=1): Spectral-drift AUC 0.985 /
+> DT 132.3.** Drive/colour caps + crash-rejection also corrected the bury
+> fold tier. Fold rows below are therefore historical only.
 
 ### 3.1 Fold Bifurcation
 
@@ -198,5 +209,7 @@ Logistic is the system where we lost most (AUC 0.866 vs learned 1.000) — and i
 **Local (post-fix, CPU) verification outputs:**
 - `outputs/benchmark/patients_100/2026-08-03_23-23-21`
 - `outputs/benchmark/patients_500/2026-08-03_23-28-45`
+
+**2026-08-04 (honest, post-generator-fix) outputs:** classic patients_100 `2026-08-04_22-21-10` (fold spectral 0.985) · bury-standard `2026-08-04_22-34-31` (fold 0.940, hopf 0.891, logistic 0.990) · bury-hard spectral-only (frozen knobs) `2026-08-04_23-17-30` (fold 0.98, hopf 0.78, logistic 0.72). Generator-tier table, bugs, and reproduction: `docs/research/synthetic_data_survey.md`.
 
 **Code:** `src/csd_observer/models/spectral_drift.py` · `studies/runner/benchmark.py` (METHODS ~line 75; `_OBS_NOISE_DEFAULT` ~line 144; spectral block ~lines 571–685) · `configs/model/default.yaml` (`spectral_drift:` block incl. `sigma_u_grid`) · `tests/test_spectral_drift.py`

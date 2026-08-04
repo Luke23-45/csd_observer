@@ -155,6 +155,8 @@ def _build_dataset_for_system(
     obs_noise_scale: float | None = None,
     seed: int,
     max_length: int = 200,
+    generator: str = "classic",
+    difficulty: str = "standard",
 ) -> dict:
     if system not in _SYSTEM_BUILDERS:
         raise ValueError(f"Unknown system: {system!r}. Options: {list(_SYSTEM_BUILDERS)}")
@@ -166,7 +168,7 @@ def _build_dataset_for_system(
         seed=seed,
         null=null,
     )
-    return build_dataset(system, **kwargs)
+    return build_dataset(system, generator=generator, difficulty=difficulty, **kwargs)
 
 
 def _run_synthetic_experiment(
@@ -835,13 +837,19 @@ def _summarize_system(agg: Dict[str, Dict[str, float]], system: str) -> None:
         print(f"{method:<20s} {dt_s:>10s} {ewa_s:>10s} {fpr_s:>10s}")
 
 
-def _parse_args() -> Tuple[List[str], Optional[int], Optional[set[str]]]:
+def _parse_args() -> Tuple[List[str], Optional[int], Optional[str], Optional[str], Optional[set[str]]]:
     n_seeds_override: Optional[int] = None
+    generator_override: Optional[str] = None
+    difficulty_override: Optional[str] = None
     methods_override: Optional[set[str]] = None
     run_names: List[str] = []
     for arg in sys.argv[1:]:
         if arg.startswith("n_seeds="):
             n_seeds_override = int(arg.split("=", 1)[1])
+        elif arg.startswith("generator="):
+            generator_override = arg.split("=", 1)[1]
+        elif arg.startswith("difficulty="):
+            difficulty_override = arg.split("=", 1)[1]
         elif arg.startswith("methods="):
             raw = arg.split("=", 1)[1]
             if raw.strip().lower() == "all":
@@ -863,10 +871,16 @@ def _parse_args() -> Tuple[List[str], Optional[int], Optional[set[str]]]:
             run_names.append(arg)
     if not run_names:
         run_names = ["patients_100", "patients_200", "patients_300", "patients_400", "patients_500", "high_noise"]
-    return run_names, n_seeds_override, methods_override
+    return run_names, n_seeds_override, generator_override, difficulty_override, methods_override
 
 
-def _run_single(run_name: str, n_seeds_override: Optional[int] = None, enabled_methods: Optional[set[str]] = None) -> None:
+def _run_single(
+    run_name: str,
+    n_seeds_override: Optional[int] = None,
+    generator_override: Optional[str] = None,
+    difficulty_override: Optional[str] = None,
+    enabled_methods: Optional[set[str]] = None,
+) -> None:
     print(f"Loading config: {run_name}")
     config = load_config(run_name)
     data_cfg = config.get("data", {})
@@ -875,6 +889,12 @@ def _run_single(run_name: str, n_seeds_override: Optional[int] = None, enabled_m
         print(f"  [override] n_seeds={n_seeds_override}")
     if enabled_methods is not None:
         print(f"  [override] methods={','.join(sorted(enabled_methods))}")
+    if generator_override is not None:
+        data_cfg["generator"] = generator_override
+        print(f"  [override] generator={generator_override}")
+    if difficulty_override is not None:
+        data_cfg["difficulty"] = difficulty_override
+        print(f"  [override] difficulty={difficulty_override}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
@@ -901,15 +921,19 @@ def _run_single(run_name: str, n_seeds_override: Optional[int] = None, enabled_m
 
     for system in systems:
         print(f"--- Generating {system} data (Synthetic Pipeline) ---")
+        generator = data_cfg.get("generator", "classic")
+        difficulty = data_cfg.get("difficulty", "standard")
         data_kwargs = dict(
             n_trajectories=n_patients, noise_scale=noise_scale,
             obs_noise_scale=obs_noise_scale, max_length=max_length,
         )
         arrays_signal = _build_dataset_for_system(
-            system, null=False, seed=seed_offset + 101, **data_kwargs,
+            system, null=False, seed=seed_offset + 101,
+            generator=generator, difficulty=difficulty, **data_kwargs,
         )
         arrays_null = _build_dataset_for_system(
-            system, null=True, seed=seed_offset + 202, **data_kwargs,
+            system, null=True, seed=seed_offset + 202,
+            generator=generator, difficulty=difficulty, **data_kwargs,
         )
 
         print(f"  signal: {arrays_signal['features'].shape}, null: {arrays_null['features'].shape}")
@@ -950,7 +974,7 @@ def _run_single(run_name: str, n_seeds_override: Optional[int] = None, enabled_m
 
 
 def main() -> None:
-    run_names, n_seeds_override, methods_override = _parse_args()
+    run_names, n_seeds_override, generator_override, difficulty_override, methods_override = _parse_args()
     total_started = time.time()
     failed_runs: List[str] = []
     for i, run_name in enumerate(run_names, 1):
@@ -959,7 +983,7 @@ def main() -> None:
         print(f"{tag}RUN: {run_name}")
         print(f"{tag}{'='*70}")
         try:
-            _run_single(run_name, n_seeds_override, methods_override)
+            _run_single(run_name, n_seeds_override, generator_override, difficulty_override, methods_override)
         except Exception as e:
             import traceback
             print(f"\nERROR: {run_name} failed: {e}")
