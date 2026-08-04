@@ -203,3 +203,6 @@ This is the foundation for the experiments and the paper. The full verified lite
 - Boettiger, C. & Hastings, A. (2012). Early warning signals and the prosecutor's fallacy. *Proc. R. Soc. B* (verify DOI at submission).
 - Page, E. S. (1954). Continuous inspection schemes. *Biometrika* 41:100–115. Roberts, S. W. (1966). A comparison of some control chart procedures. *Technometrics* 8:411–430 (verify pages at submission).
 - Scheffer, M. et al. (2009). Early warning signals for critical transitions. *Nature* 461:53–59. DOI 10.1038/nature08227.
+
+
+also called kalman_spectral_drift
