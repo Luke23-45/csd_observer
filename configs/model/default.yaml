@@ -1,5 +1,3 @@
-latent_dim: 4
-lstm_dim: 8
 spectral_drift:
   n_particles: 500
   c_min: 0.001

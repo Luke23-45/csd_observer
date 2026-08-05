@@ -1,6 +1,8 @@
 # CSD Observer: Adaptive Critical-Slowing-Down Observer
 
-Replaces the per-step MLP head of a Kalman filter with a causal LSTM head to detect temporal CSD patterns (rising autocorrelation, slowing recovery) that a static per-step head cannot see.
+Rao-Blackwellised particle filter over the spectral gap `c_k`, producing an
+early-warning alarm from the posterior collapse probability `Pr(c_{t+1} < δ | y_{0:t})`.
+Non-learned (no trainable parameters, buffers only).
 
 ## Requirements
 
@@ -15,12 +17,12 @@ Install: `pip install -e .`
 ```
 src/csd_observer/       # core package
 ├── config/load.py     # config loading (modular YAML merging)
-├── models/            # CSDKalmanObserver
+├── models/            # spectral_drift/ package (observer, preprocess, grid search)
 ├── data/              # synthetic bifurcation generators
-├── training/          # training loop, TensorizedDataset
-└── utils/             # losses, metrics, OutputWriter
-configs/               # YAML configs (data, model, training, run)
-studies/runner/        # entry points (benchmark, ablation)
+└── utils/             # metrics, OutputWriter
+configs/               # YAML configs (data, model, run)
+studies/runner/        # entry points (benchmark, diagnostics)
+analysis/              # results analysis (classical baseline pipeline)
 outputs/               # experiment results
 ```
 
@@ -30,19 +32,18 @@ outputs/               # experiment results
 # Install
 pip install -e .
 
-# Default benchmark (noise=0.15, 500 patients, 30 epochs)
-python studies/runner/benchmark.py default
+# Default benchmark (patients_100..patients_500 and high_noise)
+python studies/runner/benchmark.py
 
-# Stress tests
-python studies/runner/benchmark.py high_noise
-python studies/runner/benchmark.py low_data
+# Specific configs
+python studies/runner/benchmark.py patients_100
+
+# Spectral-drift diagnostics report
+python studies/runner/diagnose_spectral_drift.py
 ```
 
-## Verdict Criteria
+## Evaluation
 
-A system **passes** when:
-1. **DT**: Kalman-LSTM detection time <= 15 steps (DT gain >= 15 vs BCE)
-2. **EW-AUC**: Early-warning AUC gain >= 0.05 vs BCE
-3. **FPR**: False-positive ratio not > 1.5× BCE + 0.05
-
-**Overall GO**: >= 2/3 systems pass.
+Per (system, patient-count): early-warning AUC (max collapse probability in
+`[τ-50, τ-5)` vs null terminal windows), detection time at a validation-selected
+threshold (fixed null FPR 0.05), and per-step null false-positive rate.

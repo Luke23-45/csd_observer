@@ -53,7 +53,7 @@ def load_config(
 
 
 _REQUIRED_DATA_KEYS = {"noise_scale", "n_patients", "systems", "max_length", "n_seeds"}
-_REQUIRED_MODEL_KEYS = {"latent_dim", "lstm_dim"}
+_REQUIRED_MODEL_KEYS = {"spectral_drift"}
 _REQUIRED_TRAINING_KEYS = {"epochs", "batch_size", "lr", "patience", "spectral_radius_weight", "spectral_threshold"}
 
 
@@ -71,10 +71,6 @@ def _validate_config(data: dict, model: dict, training: dict) -> None:
         val = data[key]
         if not isinstance(val, (int, float)):
             raise TypeError(f"Config data.{key} must be numeric, got {type(val).__name__}")
-    for key in ("latent_dim", "lstm_dim"):
-        val = model[key]
-        if not isinstance(val, int):
-            raise TypeError(f"Config model.{key} must be int, got {type(val).__name__}")
     for key in ("epochs", "batch_size", "patience"):
         val = training[key]
         if not isinstance(val, int):

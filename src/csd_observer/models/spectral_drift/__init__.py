@@ -18,8 +18,7 @@ The reduction is theoretically grounded for fold (saddle-node) bifurcations
 only. On Hopf and period-doubling (logistic) systems the observer is applied
 empirically; results there should carry that scope caveat.
 
-The observer has no trainable parameters (buffers only), mirroring
-``ClassicalKalmanLag2`` in ``csd_observer.models.kalman_lag2``.
+The observer has no trainable parameters (buffers only).
 """
 
 from csd_observer.models.spectral_drift.grid_search import (

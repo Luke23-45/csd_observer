@@ -25,7 +25,7 @@
 
 Conclusion: none of the removed methods maps cleanly onto a citable, reproducible method. Keeping only the proposed method + published baselines makes every row in the results table independently auditable.
 
-**Code note:** source modules (`kalman_lag2.py`, `trainer.py`) are left untouched for reproducibility; the retirement is confined to the benchmark `METHODS` tuple and its wiring blocks in `studies/runner/benchmark.py`. (Optionally archived under `studies/legacy/` — review decision.)
+**Code note:** the removed methods' source (`kalman_lag2.py`, `csd_observer.py`, `training/trainer.py`, `utils/losses.py`, the debug/ablation runners and their tests) has been removed from the tree after review; all of it remains in git history for reproducibility. The retirement is complete: the benchmark `METHODS` tuple is a single row, and the model package is `src/csd_observer/models/spectral_drift/`.
 
 ---
 

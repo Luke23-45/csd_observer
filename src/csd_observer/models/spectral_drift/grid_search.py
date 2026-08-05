@@ -27,10 +27,9 @@ def grid_search_q_drift(
 ) -> float:
     """Select ``Q_drift`` by validation early-warning AUC.
 
-    Mirrors ``grid_search_q`` in ``csd_observer.models.kalman_lag2``: run
-    the observer for each candidate ``q`` on the validation split and keep
-    the one with the highest ``compute_early_warning_auc`` over the collapse
-    probabilities.
+    Runs the observer for each candidate ``q`` on the validation split and
+    keeps the one with the highest ``compute_early_warning_auc`` over the
+    collapse probabilities.
 
     Args:
         y_val_signal: ``(B_sig, T)`` centred mode sequences (signal).
