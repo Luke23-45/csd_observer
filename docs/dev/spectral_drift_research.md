@@ -189,7 +189,7 @@ Final sustained-lead ranking (K10):
   logistic: nothing (<=0.15 coverage)
 
 ==================================================================
-## 7. FUSION AND EVIDENCE-MEMORY (latch) — the winning concepts
+## 7. FUSION AND EVIDENCE-MEMORY (latch) — the surviving concepts
 ==================================================================
 
 The persistence battery exposed hopf's structure: the observer's collapse prob
@@ -229,13 +229,15 @@ Seed-family stability (offsets 0/1/2, pool threshold):
   with family; FPR 0.047-0.094 -- the latch's null blocks make FPR control
   slightly loose; report it).
 
-VERDICT ON THE CONCEPTS: the ONLY substantive, honest improvement the
-Bayesian/evidence-accumulation concepts produced is the latched-variance
-detector on hopf: coverage 0.40-0.55 -> 0.65-0.85 at matched FPR, lead
-+15-20 steps. Fusion contributes lead (not coverage) on hopf. Everything
-else (EMA/Kalman/BF on AC1, fusion on fold, all concepts on logistic) either
-matches or loses to the raw baselines -- the data is the limit, not the
-estimator.
+VERDICT ON THE CONCEPTS: the only genuine improvement from the extra
+Bayesian/evidence-accumulation ideas is the latched-variance detector on
+hopf: coverage 0.40-0.55 -> 0.65-0.85 at matched FPR, lead +15-20 steps.
+Fusion contributes lead (not coverage) on hopf. Everything else
+(EMA/Kalman/BF on AC1, fusion on fold, all concepts on logistic) either
+matches or loses to the real baselines. In particular, Kalman-Spectral-Drift
+itself does not outperform the stronger classical indicators under the
+persistence-aware protocol; on fold it only looks good through the trend
+channel, which is not a CSD result.
 
 ==================================================================
 ## 8. OPEN QUESTIONS / RESEARCH DIRECTIONS
@@ -260,32 +262,174 @@ estimator.
    fusion would need the variance channel to gate it — low expected value;
    suggest NOT pursuing unless user wants the fusion study for completeness.
 
+===================================================================
+## 9. CROSS-DOMAIN DETECTION LOGIC (deep research round)
 ==================================================================
+
+Direction (user): stop improving increments; import genuinely new detection
+concepts from other domains (ML streaming, aeroelastic flutter monitoring,
+volcanology/geophysics, computational biology) and test them on this
+benchmark under the persistence-aware protocol. Sources surveyed:
+
+  * Voight 1988 (Nature 332:125) + Bell et al. 2011 (GRL): Materials Failure
+    Forecasting Method — precursors accelerate as Omega_ddot = A * Omega_dot^a;
+    the inverse-rate plot 1/Omega_dot vs t is LINEAR and extrapolates to the
+    failure time. Our divergence laws are exactly this structure: hopf
+    detrended-radial variance V ~ C/(tau - t) (mu(t) linear, radial
+    fluctuation variance ~ sigma^2/(2|mu|)); fold raw window variance is
+    trend-dominated (1/r) in the last steps, fluctuation-dominated
+    ((tau-t)^-1/2) earlier — the fold's inverse-variance line is CURVED.
+  * Flutter monitoring (BASILE, Basseville; Peeters & De Roeck; "mode-shapes
+    correlation and CUSUM for online flutter monitoring"): subspace system
+    identification + CUSUM on the residual — the flight-test answer to
+    damping->0 detection from short noisy records.
+  * Sequential/quickest change detection (Shiryaev; Tartakovsky & Veeravalli):
+    CUSUM/Shiryaev-Roberts with ARL-ADD operating characteristics — the
+    principled version of our persistence protocol; echoed by the online-MMD
+    ML literature (alibi-detect ERT calibration; Kalinke et al. arXiv
+    2505.17789 RFF-MMD with minimax delay).
+  * Kernel two-sample drift (Gretton 2012; Bounliphone et al.): MMD between
+    reference and rolling window as a nonparametric distributional-drift
+    alarm.
+  * Deep EWS (Bury et al. PNAS 2021 / Nat. Commun. 2023): CNNs trained on
+    simulated bifurcations; only trajectory-level classification evaluated —
+    sequential alarm timing with persistence has NOT been evaluated anywhere.
+  * Limits of detection (Boettiger & Hastings 2012, J. R. Soc. Interface):
+    error-rate analysis of EWS detection; not sequential, not persistence-aware.
+  * Seizure prediction (Iasemidis et al.): the field's lead-time vs FPR
+    protocol (74 min, 0.12/h) is the same lead-coverage tradeoff as ours.
+
+Concepts tested (all benchmark governance, seeds 101/202, FPR ~0.05):
+
+(a) VOIGHT INVERSE-RATE DETECTOR (cross_domain.py, voight_v.py).
+    Rate-based (dV/dt finite differences) fails everywhere (fold K10 0.20,
+    AUC 0.25-0.49): the differenced rate of a rolling variance is unusable.
+    DIRECT 1/V(t) linear fit, score = -t-stat of the line slope:
+      fold (raw V):  K0 0.45/55, K10 0.15/75, AUC 0.417 — curvature kills it.
+      hopf (detrended V): K0 0.55/30, K10 0.20/19, AUC 0.525.
+    FORECAST-STABILITY ALARM (score gated by "tau_hat finite, in-horizon,
+    stable across last 10 steps" — the detector alarms exactly when its own
+    collapse-time forecast becomes trustworthy):
+      hopf voight-stab: K0 0.85/34.6, K10 0.55/36.2, AUC 0.925 (FPR 0.043)
+        + TAU-FORECAST at first alarm: 17/20 trajectories, MAE 14.3,
+        median 9.4 steps on tau=100 — a NEW capability (no other detector
+        produces a calibrated time-to-collapse).
+      fold voight-stab: K0 0.65/58, K10 0.35/51, forecast MAE 33.
+    Latching the model-validity instead of the evidence adds nothing: the
+    K10 drop is a model misspecification near tau (1/V is a "knee": floor
+    plateau + divergence tail; the crossing leaves the horizon). Floor
+    correction V_floor + C/(tau-t) is WORSE (noise amplification, K0 0.65).
+    Mature forecasts degrade near tau (knee) — forecast MAE 33 at the last
+    pre-tau step vs 14 at first alarm.
+
+(b) MMD KERNEL DRIFT (mmd_drift.py): reference = early 40 steps, window w=20,
+    Gaussian kernel with median heuristic, running max-with-decay latch:
+      fold: K10 1.00/51.0, AUC 1.000 (FPR 0.042) — perfect persistence, but
+        the drift is the LEVEL ramp (same channel as the observer trend),
+        and the lead (51) is below the observer's 84.
+      hopf: K10 0.10/11 — FAILS (kernel width set by the broad reference
+        distribution; the divergence is too subtle for the raw-value MMD).
+    MMD's value here is negative: on the pure-CSD system the nonparametric
+    distribution drift is invisible while windowed variance catches it.
+
+(c) LEVEL-INVERSION FORECAST (fold): x_bar^2 ~ r(t) (normal-form inversion),
+    linear extrapolation to r=0: K0/K10 1.00/84-85, AUC 1.000 — identical to
+    the observer's trend channel (the benchmark's tau IS the level crossing
+    by construction; this is a sanity check, not a CSD detector). Forecast
+    MAE 29-40 (local-slope overshoot from tracking lag); Voight's mature
+    forecast on raw V does better (MAE 13, median 13).
+
+CROSS-DOMAIN VERDICT: two of six concepts produce real signal on hopf — the
+Voight forecast-stability alarm (AUC 0.925, K0 0.85) and its tau-forecast
+(17/20, MAE 0.14*tau) — but NONE beats latched-var (0.70/55.9) on the
+coverage/lead protocol; the hopf CSD is genuinely weak (obs-noise floor
+0.15 swamps the divergence until ~10-20 steps before tau; the apparent
+early variance rise is a detrending artifact of the decaying radius
+transient). The fold is solved trivially by its level channel; the logistic
+map is undetectable (theory-consistent: no variance divergence at its
+period-doubling on this noise level). The literature survey confirms the
+field has NO persistence-aware sequential protocol and NO time-to-collapse
+forecast evaluation — both are ours to claim.
+
+==================================================================
+## 10. MECHANICS/VIBRATIONS/FLUIDS THEOREM ROUND (all negative)
+==================================================================
+
+User direction: import theorems from mechanics of solids, vibrations, fluid
+mechanics. All tested under benchmark governance (seeds 101/202, FPR ~0.05):
+
+(a) FREE-ALPHA FFM (Bell et al. 2011 GRL — the proper FFM fits the divergence
+    exponent by profile likelihood over t_f). log V vs log(t_f - s) grid fit:
+      fold: K0 0.65/41, K10 0.20/41, AUC 0.458, forecast MAE 42
+      hopf: K0 0.55/20, K10 0.10/18, AUC 0.408, forecast MAE 25
+    WORSE than the 2-parameter 1/V fit (MAE 14, K0 0.85): the t_f grid
+    overfits 40-point windows (R^2 threshold inflated; AUC < 0.5).
+(b) MONKMAN-GRANT min-stretch (life from the most stable 20-step rate):
+      fold K10 0.05, hopf K10 0.05 — dead.
+(c) STIFFNESS CHANNEL (Euler-buckling analog: drift-reconstruction slope
+    kappa(t) -> 0): hopf K0 0.00 (obs-noise attenuation floors the slope
+    until the variance grows, by which time it is the variance channel);
+    fold K0 0.25/5.1 (the slope is dominated by the equilibrium x_bar which
+    stays large until the end). Dead.
+(d) CHI-SQUARE CUSUM ON BASELINE-FIT RESIDUAL (flutter-monitoring theorem,
+    Basseville/BASILE): S_t = max(0, S_{t-1} + z_t^2 - 1). Theoretically
+    persistent-by-construction and ARL-calibrated, but the max-filter gives
+    the null CUSUM an intrinsic O(sqrt(t)) upward drift -> empirical and ARL
+    thresholds inflate (fold 1405, hopf 51, 2-ch hopf 6919): fold K0 0.15/3.7,
+    hopf K0 0.10/1.5; the raw z^2 energy crosses early on hopf (K0 0.85/18.8)
+    but does NOT sustain (K10 0.00). Dead.
+(e) EVT TAIL / INTERMITTENCY (turbulence concept, type-I/III intermittency
+    near period-doubling): Hill tail index degenerates (NaN); rolling
+    kurtosis on logistic: K0 0.30/11.2, K10 0.10 — nothing.
+
+MECHANICS-ROUND VERDICT: every imported theorem fails — not from estimator
+quality but from the benchmark's physics: the divergence is slow (ramp time
+~100 steps) and the observation-noise floor (hopf 0.15 vs fluctuation scale
+~0.025-0.125) swamps the signal until ~10-20 steps before tau. Detection is
+limited by signal-to-noise and monitoring length, exactly as the limits
+literature (Boettiger & Hastings 2012) argues. The two-parameter Voight 1/V
+forecast (section 9) remains the best forecast structure; latched-var the
+best detector. This closes the cross-domain exploration: the remaining
+honest gains are the protocol + forecast dimensions, not a new estimator.
+
+=================================================================
 ## VERDICT
 ==================================================================
 
 * As configured: benchmark numbers are artifacts (broken selection + prior-floor
   crossing + rank artifact). Not defensible as success.
 * Best-case (scale-matched, lively q): fold ~25-step lead, hopf ~13-39 — real
-  but modest, and beaten in lead by simple baselines on every system.
-* The Bayes-factor variant beats everything on fold (62-85) but is trend-based
-  and uncalibrated.
+  but modest, and still worse than the stronger baselines on persistence.
+* The Bayes-factor variant beats the observer on fold in raw lead, but it is
+  trend-based and uncalibrated, so it is not a CSD win.
 * The method's measurement (variance via OU-gap) cannot detect CSD on this
   benchmark's data; the CSD content lives in autocorrelation.
 * ABLATION VERDICT (persistence-aware): applying our Bayesian concepts
-  (EMA/Kalman/drift-BF) to the best baselines does NOT improve sustained
-  detection anywhere — the methods are data-limited, and the Bayesian machinery
-  only redistributes the same crossings. The one thing that beats baselines is
-  the observer's own trend channel on fold (100% coverage), which is not CSD.
-  Recommended report framing: persistence-aware comparison table as above;
-  label the observer's fold detection as trend detection; either fix the
-  (var,AC) identifiability or drop the CSD claim on this benchmark.
+  (EMA/Kalman/drift-BF) to the best baselines does not improve sustained
+  detection in a defensible way. The only thing that outruns the baselines is
+  the observer's own trend channel on fold (100% coverage), which should be
+  reported as trend detection, not CSD.
 * CONCEPTS VERDICT (fusion + latch): the evidence-memory latch applied to the
   variance channel is the one real improvement: hopf K10 coverage 0.40-0.55 ->
   0.65-0.85 (stable across seed families) and lead 37.5 -> 56 on the reference
   family. Fusion (min-p of calibrated channels) adds ~20 steps of sustained
   lead on hopf but no coverage. Final best sustained detectors at FPR ~0.05:
-  fold = observer CP (0.03,1e-4): frac 1.00, lead 84 (trend channel);
-  hopf = latched-var w=20/30 lam=0.99: frac 0.65-0.70, lead 56-57 (this report's
-  headline result; reproducible from latch_sweep.py / latch_stab.py);
+  fold = observer CP (0.03,1e-4): frac 1.00, lead 84, but this is a trend
+  channel rather than a CSD result;
+  hopf = latched-var w=20/30 lam=0.99: frac 0.65-0.70, lead 56-57 (the only
+  genuinely stronger sustained result in this report; reproducible from
+  latch_sweep.py / latch_stab.py);
   logistic = no method detects (all frac <= 0.15).
+* CROSS-DOMAIN VERDICT (section 9): no imported concept beats latched-var on
+  the coverage/lead protocol. The two NEW contributions are (i) the Voight
+  forecast-stability alarm — hopf K0 0.85/34.6, AUC 0.925 — which alarms
+  exactly when its collapse-time forecast becomes trustworthy, and (ii) a
+  calibrated time-to-collapse forecast (17/20 coverage, MAE 0.14*tau, median
+  0.09*tau) — a capability no EWS paper in the literature provides. The
+  honest paper from this benchmark is: (1) persistence-aware protocol + lead-
+  coverage frontier as the missing evaluation standard; (2) the collapse-time
+  forecast dimension with the Voight (FFM) mechanism imported from
+  volcanology/aero flutter monitoring; (3) the honest per-system verdict —
+  fold is level-detectable (1.00/84, trend), hopf is weakly CSD-detectable
+  (0.70/56 latched-var; 0.85/35 Voight-stability), logistic is undetectable
+  (theory-consistent).
