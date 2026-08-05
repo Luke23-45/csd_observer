@@ -123,7 +123,7 @@ def grid_search_sigma_u_q_drift(
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    from csd_observer.utils.metrics import compute_early_warning_auc
+    from csd_observer.utils.evaluation import compute_early_warning_auc
 
     y_sig_t = torch.from_numpy(
         np.asarray(y_val_signal, dtype=np.float32)

@@ -13,9 +13,20 @@ import yaml
 class OutputWriter:
     def __init__(self, experiment_name: str, base_dir: str | Path = "outputs"):
         self.name = experiment_name
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.root = Path(base_dir) / experiment_name / timestamp
-        self.root.mkdir(parents=True, exist_ok=True)
+        # Microsecond timestamp; on the (practically impossible) collision
+        # we re-stamp rather than silently merge into an existing run
+        # directory (that would append to the same results.jsonl).
+        for _ in range(10):
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
+            root = Path(base_dir) / experiment_name / timestamp
+            try:
+                root.mkdir(parents=True, exist_ok=False)
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise RuntimeError(f"Could not allocate a unique output directory under {Path(base_dir) / experiment_name}")
+        self.root = root
         (self.root / "configs").mkdir(exist_ok=True)
         (self.root / "metrics").mkdir(exist_ok=True)
         (self.root / "results").mkdir(exist_ok=True)

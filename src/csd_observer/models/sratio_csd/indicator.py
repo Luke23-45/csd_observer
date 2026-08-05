@@ -14,12 +14,19 @@ References:
 
 * Dakos et al. (2012), *PLoS ONE* 7(7): e41010 — density ratio of the
   power spectrum at low over high frequencies within rolling windows.
-* ``earlywarnings`` (R) ``generic_ews`` ``densratio``:
-  ``spec.ar(window, n.freq = mw, order = 1)``; ``densratio =
-  spec[low]/spec[high]`` with ``low = 2`` (lowest non-zero bin) and
-  ``high = mw`` (last bin = Nyquist) in the current CRAN versions; the
-  very early r-forge versions used ``low = 6`` (documented there only).
-  We follow the current canonical convention (``low = 2``).
+* ``earlywarnings`` (R) ``generic_ews`` ``densratio`` (r-forge
+  ``generic_ews.R``): ``spec.ar(window, n.freq = omw, order = 1)``
+  with ``omw = n - mw + 1`` (the *number of rolling windows*, not the
+  window length); ``densratio = spec[low]/spec[high]`` with the fixed
+  ``low = 6`` and ``high = omw`` (last bin = Nyquist). The plan §3
+  band convention deviates deliberately: the grid is anchored to the
+  *window* length with the lowest non-zero bin and the Nyquist bin,
+  because the toolbox's fixed bins depend on the full-series length
+  and would break prefix-consistency (plan §4). For the benchmark's
+  ``T = 200``, ``mw = 30`` the toolbox low bin ``5*0.5/170 ~ 0.0147``
+  and ours ``0.5/29 ~ 0.0172`` are both deep in the low-frequency
+  tail, and the ratio is monotone in ``phi`` on both grids, so ranked
+  behaviour coincides.
 * R ``stats::spec.ar``: the parametric AR(1) spectral density is
   ``S(f) = var.pred / ((1 - cos(2*pi*f)*phi)^2 + (sin(2*pi*f)*phi)^2)
   = var.pred / (1 + phi^2 - 2*phi*cos(2*pi*f))``; the ``var.pred``
@@ -35,7 +42,9 @@ Detrending follows the plan's global convention (within-window linear
 detrending via ``_linear_detrend``); the toolbox instead applies
 Gaussian-kernel smoothing before rolling windows. For a window of
 ``n`` points the grid is anchored to the *effective* window size
-``n = min(W, t+1)`` (as ``earlywarnings`` uses ``n.freq = winsize``),
+``n = min(W, t+1)`` (the toolbox instead anchors its ``spec.ar`` grid
+to ``n.freq = omw``, the number of rolling windows — a non-causal
+choice we deliberately do not adopt, see the reference above),
 so partial windows are scored on their own grid and the score at step
 ``t`` depends only on the causal window (plan §4).
 
@@ -77,8 +86,9 @@ def raw_sratio_indicator(
     available in the causal window (the same guard as the other
     window-30 baselines), when the detrended window has zero variance
     (``phi`` is 0/0 — constant or perfectly linear windows), when the
-    spectral density is degenerate at the used bins (e.g. ``phi = -1``
-    gives zero spectrum at Nyquist), or when ``t >= seq_lengths[b]``
+    spectral density is singular at the used bins (e.g. ``phi = -1``
+    makes the spectral denominator ``(1 + phi)^2`` vanish at Nyquist,
+    giving a pole), or when ``t >= seq_lengths[b]``
     (beyond the valid prefix).
 
     For multi-channel inputs the channel-wise scores are combined by

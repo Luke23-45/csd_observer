@@ -2,7 +2,7 @@
 
 def main() -> None:
     print("csd_observer v0.1.0")
-    print("Use: python studies/runner/benchmark.py <run_name>")
+    print("Use: python -m csd_observer.benchmark --help  (or studies/runner/benchmark.py)")
 
 
 if __name__ == "__main__":

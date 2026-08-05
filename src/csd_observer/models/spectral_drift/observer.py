@@ -180,19 +180,16 @@ class SpectralDriftObserver(nn.Module):
                     N, device=device
                 ).unsqueeze(0).expand(B, N).clone()
                 flagged = do_resample.nonzero(as_tuple=True)[0]
-                if len(flagged) > 0:
-                    idx[flagged] = self._systematic_resample(
-                        weights[flagged], generator
-                    )
+                idx[flagged] = self._systematic_resample(
+                    weights[flagged], generator
+                )
                 c_pred = torch.gather(c_pred, 1, idx)
                 u_corr = torch.gather(u_corr, 1, idx)
                 p_corr = torch.gather(p_corr, 1, idx)
-                log_w = torch.full(
-                    (B, N), -np.log(N), device=device, dtype=torch.float32
-                )
-                weights = torch.full(
-                    (B, N), 1.0 / N, device=device, dtype=torch.float32
-                )
+                # only the resampled rows lose their posterior weights; the
+                # particles (and weights) of non-flagged rows are untouched.
+                log_w[flagged] = -np.log(N)
+                weights[flagged] = 1.0 / N
 
             c = c_pred
             u = u_corr

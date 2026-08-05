@@ -20,13 +20,15 @@ References:
 * Dakos et al. (2012), *PLoS ONE* 7(7): e41010 — return rate in
   rolling windows.
 * ``earlywarnings`` (R) ``generic_ews``: ``ar1`` is fitted as
-  ``ar.ols(x, aic = FALSE, order.max = 1, demean = TRUE,
-  intercept = FALSE)`` (source-verified) and ``returnrate = 1/ar1``
-  in the code (the docs text says ``1 - ar(1)``; the code is
-  authoritative, plan §3). ``ar.ols`` regresses ``x_{t+1}`` on
-  ``x_t`` (no intercept) after demeaning, i.e.
-  ``phi = sum(x[:-1]*x[1:]) / sum(x[:-1]^2)`` — the OLS estimator,
-  which differs from the Yule-Walker/ACF estimator
+  ``ar.ols(x, aic = FALSE, order.max = 1, dmean = FALSE,
+  intercept = FALSE)`` (verbatim from r-forge ``generic_ews.R``; the
+  misspelled ``dmean`` argument is forwarded to and ignored by
+  ``lm.fit``'s dots, so the effective call keeps ``ar.ols``'s default
+  ``demean = TRUE``) and ``returnrate = 1/ar1`` in the code (the docs
+  text says ``1 - ar(1)``; the code is authoritative, plan §3).
+  ``ar.ols`` regresses ``x_{t+1}`` on ``x_t`` (no intercept) after
+  demeaning, i.e. ``phi = sum(x[:-1]*x[1:]) / sum(x[:-1]^2)`` — the
+  OLS estimator, which differs from the Yule-Walker/ACF estimator
   (``sum(x[:-1]*x[1:]) / sum(x^2)``) by ``O(1/n)``; we implement the
   OLS estimator verbatim.
 

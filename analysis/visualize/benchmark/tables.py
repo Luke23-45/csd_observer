@@ -30,23 +30,26 @@ def _fmt_mean_std(mean: float, std: float, precision: int = 3) -> str:
 
 
 def _aggregate(records: pd.DataFrame, group_cols: List[str]) -> pd.DataFrame:
-    agg = (
-        records.groupby(group_cols, observed=True)
-        .agg(
-            n=("seed", "count"),
-            detection_time_mean=("detection_time", "mean"),
-            detection_time_std=("detection_time", "std"),
-            ew_auc_mean=("ew_auc", "mean"),
-            ew_auc_std=("ew_auc", "std"),
-            fpr_mean=("fpr", "mean"),
-            fpr_std=("fpr", "std"),
-            threshold_mean=("threshold", "mean"),
-            threshold_std=("threshold", "std"),
-            n_epochs_mean=("n_epochs_trained", "mean"),
-            n_epochs_std=("n_epochs_trained", "std"),
-        )
-        .reset_index()
-    )
+    agg_spec = {
+        "n": ("seed", "count"),
+        "detection_time_mean": ("detection_time", "mean"),
+        "detection_time_std": ("detection_time", "std"),
+        "ew_auc_mean": ("ew_auc", "mean"),
+        "ew_auc_std": ("ew_auc", "std"),
+        "fpr_mean": ("fpr", "mean"),
+        "fpr_std": ("fpr", "std"),
+        "threshold_mean": ("threshold", "mean"),
+        "threshold_std": ("threshold", "std"),
+    }
+    # Training-epoch metrics only exist for legacy runs; the current suite
+    # has no training loop, so tables must not require the column.
+    if "n_epochs_trained" in records.columns:
+        agg_spec["n_epochs_mean"] = ("n_epochs_trained", "mean")
+        agg_spec["n_epochs_std"] = ("n_epochs_trained", "std")
+    agg = records.groupby(group_cols, observed=True).agg(**agg_spec).reset_index()
+    if "n_epochs_mean" not in agg.columns:
+        agg["n_epochs_mean"] = float("nan")
+        agg["n_epochs_std"] = float("nan")
     return agg
 
 

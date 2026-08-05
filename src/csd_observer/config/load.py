@@ -55,6 +55,7 @@ def load_config(
 _REQUIRED_DATA_KEYS = {"noise_scale", "n_patients", "systems", "max_length", "n_seeds"}
 _REQUIRED_MODEL_KEYS = {"spectral_drift"}
 _REQUIRED_TRAINING_KEYS = {"epochs", "batch_size", "lr", "patience", "spectral_radius_weight", "spectral_threshold"}
+_CSD_INDICATOR_METHODS = ("ac1", "var", "skew", "sratio", "retrate", "dfa", "dmd")
 
 
 def _validate_config(data: dict, model: dict, training: dict) -> None:
@@ -79,3 +80,34 @@ def _validate_config(data: dict, model: dict, training: dict) -> None:
         val = training[key]
         if not isinstance(val, (int, float)):
             raise TypeError(f"Config training.{key} must be numeric, got {type(val).__name__}")
+    _validate_csd_indicators(model)
+
+
+def _validate_csd_indicators(model: dict) -> None:
+    block = model.get("csd_indicators")
+    if block is None:
+        return
+    if not isinstance(block, dict):
+        raise TypeError(f"Config model.csd_indicators must be a mapping, got {type(block).__name__}")
+    fpr = block.get("fpr_target")
+    if not isinstance(fpr, (int, float)):
+        raise TypeError(f"Config model.csd_indicators.fpr_target must be numeric, got {type(fpr).__name__}")
+    for name in _CSD_INDICATOR_METHODS:
+        spec = block.get(name)
+        if not isinstance(spec, dict):
+            raise ValueError(
+                f"Config model.csd_indicators is missing the '{name}' method block"
+            )
+        ws = spec.get("window_size")
+        if not isinstance(ws, int) or ws < 1:
+            raise TypeError(
+                f"Config model.csd_indicators.{name}.window_size must be a positive int, "
+                f"got {ws!r}"
+            )
+    dmd = block["dmd"]
+    for key in ("embedding_dim", "rank"):
+        val = dmd.get(key)
+        if not isinstance(val, int) or val < 1:
+            raise TypeError(
+                f"Config model.csd_indicators.dmd.{key} must be a positive int, got {val!r}"
+            )

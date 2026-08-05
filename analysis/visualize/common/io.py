@@ -1,5 +1,5 @@
 """
-Data I/O utilities for the Krishi YOLO analysis framework.
+Data I/O utilities for the CSD observer benchmark visualization.
 
 Handles file loading, path resolution, and formatting safety.
 """

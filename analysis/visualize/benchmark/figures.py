@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
@@ -12,6 +13,8 @@ import pandas as pd
 from analysis.visualize.benchmark.data import BenchmarkStore
 from analysis.visualize.common.constants import METHODS, METHOD_COLORS, PATIENT_COUNTS, SUPPLEMENTAL_COLORS, SYSTEMS, SYSTEM_COLORS, SYSTEM_DISPLAY_NAMES, METHOD_DISPLAY_NAMES
 from analysis.visualize.common.style import apply_thesis_style, save_figure
+
+logger = logging.getLogger(__name__)
 
 
 def _aggregate(records: pd.DataFrame, group_cols: List[str]) -> pd.DataFrame:
@@ -31,7 +34,7 @@ def _aggregate(records: pd.DataFrame, group_cols: List[str]) -> pd.DataFrame:
 
 def _method_kwargs(method: str) -> Dict[str, str]:
     color = METHOD_COLORS[method]
-    if method == "Kalman-BCE":
+    if method == "Kalman-Spectral-Drift":
         return {"color": color, "marker": "o", "linestyle": "-", "linewidth": 2.0}
     return {"color": color, "marker": "s", "linestyle": "--", "linewidth": 2.0}
 
@@ -44,7 +47,7 @@ def _clean_axis(ax: plt.Axes) -> None:
 
 
 def _representative_seed(store: BenchmarkStore, patient_count: int, system: str) -> int:
-    return store.representative_seed(patient_count, system, anchor_method="Kalman-BCE")
+    return store.representative_seed(patient_count, system, anchor_method="Kalman-Spectral-Drift")
 
 
 def _safe_nanmedian(values: np.ndarray) -> float:
@@ -126,12 +129,14 @@ def plot_patient_sweep(store: BenchmarkStore, output_dir: Path) -> List[Path]:
 def plot_trajectory_panels(store: BenchmarkStore, output_dir: Path, patient_count: int = 500) -> List[Path]:
     """Plot representative trajectory summaries for each system and method."""
     fig, axes = None, None
+    n_methods = len(METHODS)
+    n_cols = int(np.ceil(n_methods / len(SYSTEMS)))
     with apply_thesis_style():
         plt.rcParams["font.family"] = "sans-serif"
         plt.rcParams["font.sans-serif"] = ["Arial", "Helvetica", "DejaVu Sans"]
         plt.rcParams["axes.linewidth"] = 1.0
         plt.rcParams["axes.edgecolor"] = "black"
-        fig, axes = plt.subplots(3, 2, figsize=(13.0, 9.0), sharex=True, sharey=True, constrained_layout=False)
+        fig, axes = plt.subplots(len(SYSTEMS), n_cols, figsize=(5.0 * n_cols, 9.0), sharex=True, sharey=True, constrained_layout=False)
 
         for row_idx, system in enumerate(SYSTEMS):
             seed = _representative_seed(store, patient_count, system)
@@ -182,6 +187,10 @@ def plot_trajectory_panels(store: BenchmarkStore, output_dir: Path, patient_coun
                     va="bottom",
                 )
 
+        for col_idx in range(len(METHODS), n_cols):
+            for row_idx in range(len(SYSTEMS)):
+                axes[row_idx, col_idx].set_visible(False)
+
         handles, labels = axes[0, 0].get_legend_handles_labels()
         if handles:
             fig.legend(
@@ -201,7 +210,12 @@ def plot_trajectory_panels(store: BenchmarkStore, output_dir: Path, patient_coun
 
 
 def plot_training_curves(store: BenchmarkStore, output_dir: Path, patient_count: int = 500) -> List[Path]:
-    """Plot training loss and validation metric curves for representative runs."""
+    """Plot training loss and validation metric curves for representative runs.
+
+    Only methods with epoch logs are plotted; the current benchmark suite
+    has no training loop, so a missing epoch log for a method simply skips
+    it, and the figure is skipped entirely when none are available.
+    """
     with apply_thesis_style():
         plt.rcParams["font.family"] = "sans-serif"
         plt.rcParams["font.sans-serif"] = ["Arial", "Helvetica", "DejaVu Sans"]
@@ -209,11 +223,18 @@ def plot_training_curves(store: BenchmarkStore, output_dir: Path, patient_count:
         plt.rcParams["axes.edgecolor"] = "black"
         fig, axes = plt.subplots(3, 1, figsize=(12.0, 9.0), sharex=True, constrained_layout=False)
 
+        plotted_any = False
         for row_idx, system in enumerate(SYSTEMS):
             ax = axes[row_idx]
             seed = _representative_seed(store, patient_count, system)
             for method in METHODS:
-                log = store.load_epoch_log(patient_count, system, method, seed)
+                try:
+                    log = store.load_epoch_log(patient_count, system, method, seed)
+                except FileNotFoundError:
+                    continue
+                if log.empty:
+                    continue
+                plotted_any = True
                 epochs = log["epoch"].to_numpy(dtype=float)
                 train_loss = log["train_loss"].to_numpy(dtype=float)
                 val_metric = log["val_metric"].to_numpy(dtype=float)
@@ -236,6 +257,11 @@ def plot_training_curves(store: BenchmarkStore, output_dir: Path, patient_count:
 
             ax.set_ylabel(f"{SYSTEM_DISPLAY_NAMES[system]}\nLoss / Metric", fontsize=10, fontweight="bold")
             _clean_axis(ax)
+
+        if not plotted_any:
+            plt.close(fig)
+            logger.warning("No epoch logs found in the selected batches; skipping training-curve figure.")
+            return []
 
         axes[-1].set_xlabel("Epoch", fontsize=10)
         handles, labels = axes[0].get_legend_handles_labels()

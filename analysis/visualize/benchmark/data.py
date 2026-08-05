@@ -19,11 +19,19 @@ logger = logging.getLogger(__name__)
 
 _PATIENT_RE = re.compile(r"patients_(\d+)")
 _METHOD_FILE_MAP = {
-    "Kalman-BCE": "kalman_bce",
-    "Kalman-LSTM-Spec": "kalman_lstm_spec",
-    "Kalman-LSTM": "kalman_lstm",
-    "Kalman-BCE-Spec": "kalman_bce_spec",
+    "Kalman-Spectral-Drift": "kalman_spectral_drift",
+    "VAR-CSD": "var_csd",
+    "AC1-CSD": "ac1_csd",
+    "SKEW-CSD": "skew_csd",
+    "SRATIO-CSD": "sratio_csd",
+    "DFA-CSD": "dfa_csd",
+    "RETRATE-CSD": "retrate_csd",
+    "DMD-CSD": "dmd_csd",
 }
+
+# Older batches use second-resolution timestamps; the benchmark suite now
+# writes microsecond resolution (collision-safe output directories).
+_TIMESTAMP_FORMATS = ("%Y-%m-%d_%H-%M-%S-%f", "%Y-%m-%d_%H-%M-%S")
 
 
 @dataclass(frozen=True)
@@ -35,6 +43,7 @@ class BenchmarkBatch:
     n_records: int
     n_unique_triples: int
     n_systems: int
+    n_methods: int
     timestamp: datetime
 
 
@@ -65,11 +74,15 @@ class BenchmarkStore:
             df = df[df["method"] == method]
         return df.copy()
 
-    def representative_seed(self, patient_count: int, system: str, anchor_method: str = "Kalman-BCE") -> int:
+    def representative_seed(self, patient_count: int, system: str, anchor_method: str = "Kalman-Spectral-Drift") -> int:
         """Return the seed whose anchor-method AUC is closest to the median."""
         df = self.filtered(patient_count=patient_count, system=system, method=anchor_method)
         if df.empty:
-            raise ValueError(f"No records found for {patient_count=} {system=} {anchor_method=}")
+            present = self.filtered(patient_count=patient_count, system=system)["method"].unique()
+            if len(present) == 0:
+                raise ValueError(f"No records found for {patient_count=} {system=}")
+            anchor_method = str(present[0])
+            df = self.filtered(patient_count=patient_count, system=system, method=anchor_method)
         med = float(df["ew_auc"].median())
         order = df.assign(distance=(df["ew_auc"] - med).abs()).sort_values(
             ["distance", "seed"],
@@ -112,7 +125,19 @@ def _extract_batch_dir(results_file: Path) -> Path:
 
 
 def _parse_timestamp(batch_id: str) -> datetime:
-    return datetime.strptime(batch_id, "%Y-%m-%d_%H-%M-%S")
+    for fmt in _TIMESTAMP_FORMATS:
+        try:
+            return datetime.strptime(batch_id, fmt)
+        except ValueError:
+            continue
+    raise ValueError(f"Unrecognised batch timestamp: {batch_id!r}")
+
+
+def _parse_timestamp_or_nat(batch_id: str):
+    try:
+        return _parse_timestamp(batch_id)
+    except ValueError:
+        return pd.NaT
 
 
 def _load_results_file(results_file: Path) -> pd.DataFrame:
@@ -131,7 +156,7 @@ def _load_results_file(results_file: Path) -> pd.DataFrame:
     df["batch_id"] = _extract_batch_dir(results_file).name
     df["batch_dir"] = str(_extract_batch_dir(results_file))
     df["results_file"] = str(results_file)
-    df["timestamp"] = pd.to_datetime(df["batch_id"], format="%Y-%m-%d_%H-%M-%S", errors="coerce")
+    df["timestamp"] = pd.to_datetime(df["batch_id"].map(_parse_timestamp_or_nat))
     return df
 
 
@@ -146,6 +171,7 @@ def _build_batch_index(all_records: pd.DataFrame) -> pd.DataFrame:
                 "n_records",
                 "n_unique_triples",
                 "n_systems",
+                "n_methods",
                 "timestamp",
             ]
         )
@@ -163,6 +189,7 @@ def _build_batch_index(all_records: pd.DataFrame) -> pd.DataFrame:
                 "n_records": int(len(df)),
                 "n_unique_triples": int(df[["system", "method", "seed"]].drop_duplicates().shape[0]),
                 "n_systems": int(df["system"].nunique()),
+                "n_methods": int(df["method"].nunique()),
                 "timestamp": df["timestamp"].iloc[0],
             }
         )
@@ -179,8 +206,8 @@ def _select_batches(batch_index: pd.DataFrame) -> Dict[int, BenchmarkBatch]:
         if subset.empty:
             continue
         subset = subset.sort_values(
-            ["n_unique_triples", "n_systems", "n_records", "timestamp"],
-            ascending=[False, False, False, False],
+            ["n_methods", "n_unique_triples", "n_systems", "n_records", "timestamp"],
+            ascending=[False, False, False, False, False],
         )
         row = subset.iloc[0]
         selected[patient_count] = BenchmarkBatch(
@@ -191,6 +218,7 @@ def _select_batches(batch_index: pd.DataFrame) -> Dict[int, BenchmarkBatch]:
             n_records=int(row["n_records"]),
             n_unique_triples=int(row["n_unique_triples"]),
             n_systems=int(row["n_systems"]),
+            n_methods=int(row["n_methods"]),
             timestamp=row["timestamp"].to_pydatetime() if hasattr(row["timestamp"], "to_pydatetime") else row["timestamp"],
         )
     return selected

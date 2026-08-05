@@ -26,8 +26,17 @@ def _detect_project_root() -> Path:
 
 
 def _detect_data_root() -> Path:
-    """Return the benchmark experiment-data directory."""
-    return _detect_project_root() / "analysis" / "experiment_data"
+    """Return the benchmark experiment-data directory.
+
+    Prefers the current benchmark suite output (repo-root ``outputs/``)
+    when it contains runs; falls back to the legacy
+    ``analysis/experiment_data`` location.
+    """
+    project_root = _detect_project_root()
+    new_root = project_root / "outputs"
+    if any(new_root.glob("**/results.jsonl")):
+        return new_root
+    return project_root / "analysis" / "experiment_data"
 
 
 def get_config(
