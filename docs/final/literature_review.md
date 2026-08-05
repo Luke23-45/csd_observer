@@ -13,15 +13,19 @@ a verified source; where a claim is ours, it is labelled as such.
 
 This review establishes the evidence base for the paper's core claim:
 
-  The early-warning-signal (EWS) literature evaluates detectors with
-  single-shot, per-trajectory metrics (trend statistics, ROC/AUC,
-  classification accuracy, single confidence-band crossings). None of
-  it defines an alarm as a *sustained* event, none reports trajectory-level
-  coverage under a controlled per-step false-positive rate, and none
-  documents the failure mode in which an indicator crosses a threshold
-  early and then never stays above it. This project supplies that missing
-  evaluation protocol and demonstrates that its adoption changes the
-  ranking of existing methods.
+  Sustained-crossing alarm rules with controlled false-alarm rates are
+  standard, 70-year-old practice in industrial process monitoring
+  (Western Electric run rules, 1956), but they have not been imported
+  into CSD/EWS benchmarking for bifurcation-type transitions. The EWS
+  field evaluates detectors with single-shot, per-trajectory metrics
+  (trend statistics, ROC/AUC, classification accuracy, single
+  confidence-band crossings); no EWS benchmark defines an alarm as a
+  K-step sustained event with trajectory-level coverage under a
+  calibrated per-step false-positive rate, and none documents the
+  failure mode in which an indicator crosses a threshold early and then
+  never stays above it. This project supplies that missing evaluation
+  protocol and demonstrates that its adoption changes the ranking of
+  existing methods.
 
 The previous project direction (a Bayesian spectral-drift observer for CSD
 detection) failed under exactly this evaluation: its headline AUC values
@@ -47,8 +51,7 @@ https://www.pnas.org/doi/abs/10.1073/pnas.0802430105
 (verified: sliding-window AR1 + Kendall tau + surrogate significance)
 
 This template — running-window indicator + trend test + surrogate or
-baseline significance — dominates the applied literature (see the
-systematic review in 2.6).
+baseline significance — dominates the applied literature (see 2.6).
 
 ### 2.2 Per-trajectory error rates: ROC / AUC
 
@@ -110,21 +113,57 @@ of |DEV| toward 1 and by application to real datasets; no alarm protocol.
 https://www.science.org/doi/10.1126/sciadv.abq4558
 (verified: DEV, threshold |DEV|=1, trend-based evaluation)
 
-### 2.5 Sequential / online detection (the adjacent field)
+### 2.5 Industrial process monitoring: run rules and sequential alarms
 
-The statistical process-control tradition formalises *sequential* alarms:
-CUSUM/Shiryaev-Roberts statistics with average-run-length (ARL) and
-average-detection-delay (ADD) operating characteristics (Shiryaev 1963;
-Tartakovsky & Veeravalli 2008 — standard texts). In ML streaming, Kalinke
-& Gavioli-Akilagun (2025, arXiv:2505.17789, NeurIPS 2025) give a fully
-online kernel-MMD change detector (RFF-MMD) with minimax-optimal detection
-delay and run-length calibration. These methods define alarms sequentially
-and calibrate false alarms by expected run time — the closest existing
-formalism to our protocol — but they are evaluated for *abrupt* changes,
-not for slow bifurcation ramps, and none of them is used in the EWS
-literature for critical transitions.
+This is the provenance our protocol must acknowledge, and it is decisive
+for the framing: *sustained-crossing alarm rules with calibrated false-alarm
+rates are not new in monitoring generally.*
+
+The Western Electric Company's *Statistical Quality Control Handbook*
+(1956) codified the four Western Electric run rules for control charts:
+(1) one point beyond the 3-sigma limit; (2) two of three consecutive points
+beyond the 2-sigma limit; (3) four of five consecutive points beyond the
+1-sigma limit; (4) eight consecutive points on one side of the centre line.
+Each rule carries a known theoretical false-alarm probability under iid
+normal observations (roughly 0.3% per point for the individual rules; NIST
+Engineering Statistics Handbook), and the combined rule set has an exactly
+computable in-control average run length: ARL0 = 91.75 points, obtained by
+Markov-chain methods by Champ & Woodall (1987, Technometrics 29(4):393-399)
+and confirmed in the NIST handbook ("adding the WECO rules increases the
+frequency of false alarms to about once in every 91.75 points, on the
+average"). Wheeler (SPC Press) gives the same ARL analysis in accessible
+form. The WE rule set is the K-of-N run-rule ancestor of the K0/K10
+protocol in this project: alarm = a run of points crossing a threshold,
+with a calibrated false-alarm rate, and with exact run-length theory
+available for analytical validation.
+
+The complementary sequential formalism is the CUSUM/Shiryaev-Roberts
+family with average-run-length (ARL) and average-detection-delay (ADD)
+operating characteristics (Shiryaev 1963; Tartakovsky & Veeravalli 2008 —
+standard texts). In ML streaming, Kalinke & Gavioli-Akilagun (2025,
+arXiv:2505.17789, NeurIPS 2025) give a fully online kernel-MMD change
+detector (RFF-MMD) with minimax-optimal detection delay and run-length
+calibration. These methods define alarms sequentially and calibrate false
+alarms by expected run time — the closest existing formalism to our
+protocol — but they are evaluated for *abrupt* changes, not for slow
+bifurcation ramps, and none of them is used in the EWS literature for
+critical transitions.
 https://arxiv.org/abs/2505.17789
 (verified: online RFF-MMD, ARL-style calibration, minimax delay)
+
+References for this subsection:
+- Western Electric Company (1956). Statistical Quality Control Handbook.
+  Indianapolis: Western Electric Co. OCLC 33858387.
+- Champ, C.W. & Woodall, W.H. (1987). Exact Results for Shewhart Control
+  Charts With Supplementary Runs Rules. Technometrics 29(4):393-399.
+  https://www.tandfonline.com/doi/abs/10.1080/00401706.1987.10488266
+  (paper PDF: https://www.stat.cmu.edu/technometrics/80-89/VOL-29-04/v2904393.pdf)
+- NIST/SEMATECH e-Handbook of Statistical Methods, section 6.3.2
+  ("WECO rules increase false alarms... once in every 91.75 points,
+  on the average (see Champ and Woodall, 1987)").
+  https://www.itl.nist.gov/div898/handbook/pmc/section3/pmc32.htm
+- Wheeler, D.J. Contra Two Sigma. SPC Press.
+  https://spcpress.com/pdf/DJW255.pdf
 
 ### 2.6 Applied fields
 
@@ -140,6 +179,16 @@ the field's dominant metric is a single-shot AUC and that FPR and lead time
 are rarely reported.
 https://doi.org/10.1371/journal.pgph.0002253
 (verified: AUC-dominant evaluation, FPR and lead time rarely reported)
+
+Disambiguation: a later paper by the same group — Delecroix, van Nes,
+Scheffer & van de Leemput, "Monitoring resilience in bursts" (PNAS
+121(31):e2407148121, 2024) — is *not* related to alarm persistence. It is
+a sampling-design study comparing short high-resolution monitoring bursts
+against continuous time series for estimating resilience change. We do not
+cite it as related work on the protocol; it is noted here only to preempt
+the association by title.
+https://www.pnas.org/doi/10.1073/pnas.2407148121
+(verified: sampling-design study, bursts vs continuous series)
 
 Van Beers et al. (2026, arXiv:2607.25370, "Critical slowing down for
 predicting controller induced loss of control in quadrotors") apply CSD
@@ -176,16 +225,25 @@ contribution; we cite it and move on:
   https://arxiv.org/abs/2603.14944
 
 ==================================================================
-## 3. The gap: no persistence-aware sequential evaluation
+## 3. The gap (reframed)
 ==================================================================
 
-Across the verified corpus above, no paper:
+It is NOT claimed that sustained-crossing alarms with controlled FPR are
+new: they are the Western Electric run rules (1956), standard industrial
+practice for seven decades, with exact run-length theory (Champ & Woodall
+1987). What is claimed — and what the verified corpus supports — is the
+specific, checkable statement:
 
-1. Defines an alarm as a K-step *sustained* crossing (the indicator must
-   remain above threshold for K consecutive steps);
-2. Reports trajectory-level *coverage* (fraction of approaching trajectories
-   that ever produce a sustained alarm) at a *controlled* per-step
-   false-positive rate on explicit null trajectories;
+  Sustained-crossing, controlled-FPR alarm rules have not been imported
+  into CSD/EWS benchmarking for bifurcation-type transitions.
+
+Concretely, no paper in the verified corpus above:
+
+1. Defines the alarm of an EWS detector as a K-step *sustained* crossing
+   (the run-rule framing) inside a benchmarking protocol;
+2. Reports trajectory-level *coverage* (fraction of approaching
+   trajectories that ever produce a sustained alarm) at a *controlled*
+   per-step false-positive rate on explicit null trajectories;
 3. Documents or analyses the *dip failure mode*: an indicator that crosses
    the threshold early (a "warning") and then falls back below it and never
    returns before the transition.
@@ -196,7 +254,7 @@ control, no trajectory statistics); TIPMOC's stepwise power-law adjudication
 (no coverage statistics); the spatial smoothing post-process in the 2024
 high-dimensional bifurcation paper (an ad-hoc persistence hack); and the
 SPC/quickest-detection literature (abrupt-change setting, not slow ramps,
-not applied to EWS).
+not applied to EWS benchmarking).
 
 ==================================================================
 ## 4. Why the gap matters (mechanism)
@@ -219,7 +277,7 @@ Our benchmark demonstrates all three effects quantitatively (section 5);
 the protocol quantifies the third directly.
 
 ==================================================================
-## 5. Preliminary evidence from our benchmark (ours)
+## 5. Preliminary evidence from our benchmark (ours — pilot stage)
 ==================================================================
 
 Protocol (ours): threshold = 95th percentile of the per-step score on
@@ -230,7 +288,11 @@ per-step false-alarm rate on test nulls. Systems: fold (tau ~ 133),
 Hopf (tau ~ 100), logistic map (tau ~ 67), classic generators, seeds
 101/202.
 
-Ranking inversion (the headline result, to be reproduced in the paper):
+CAVEAT: these numbers are a TWO-SEED PILOT. They establish the phenomenon;
+they are not yet table-ready. The publication version requires a seed sweep
+with confidence intervals on every quantity.
+
+Ranking inversion (the pilot result):
 
   Hopf system (tau = 100):
     method                AUC   K0 coverage/lead    K10 coverage/lead
@@ -260,31 +322,85 @@ check of the protocol, not a CSD result.
 
 These numbers come from our experiment scripts (persistence battery,
 fusion/latch experiments, seeds 101/202) and must be re-run through the
-final repository harness before publication.
+final repository harness with a proper seed sweep before publication.
 
 ==================================================================
-## 6. Positioned contribution
+## 6. Validation step: run-rule theory as an analytical check
+==================================================================
+
+The run-rule provenance gives a validation instrument, not just a citation:
+under iid null noise, the false-alarm properties of a K-of-N run rule are
+exactly computable by Markov-chain methods (Champ & Woodall 1987). We will
+therefore sanity-check the empirical FPR-on-nulls calibration analytically:
+
+- For each (threshold, K) pair used in the protocol, compute the exact
+  in-control alarm probability / ARL of the corresponding run rule under
+  the null assumption of iid scores at the calibrated quantile, and
+  compare against the empirically measured FPR on null trajectories.
+- Discrepancy diagnostics: residual autocorrelation in windowed EWS scores
+  (the null scores are NOT iid — window overlap induces serial dependence)
+  is expected to inflate run-rule FPR relative to the iid formula; the
+  comparison quantifies that inflation and either justifies the empirical
+  calibration or forces a correction (e.g., block-based calibration or
+  effective-sample-size adjustment).
+
+This turns the SPC lineage from a liability (a reviewer will know the
+rules) into a methodological asset: the protocol inherits a checkable
+theory, and the paper reports both the empirical FPR and its analytical
+counterpart.
+
+==================================================================
+## 7. Positioned contribution and remaining work
 ==================================================================
 
 RQ1 (main): Does persistence-aware evaluation change which detectors we
-think are best? Answer (ours, preliminary): yes — observer AUC 0.997 drops
-to 0.25 sustained coverage; AC1 0.783 AUC drops to 0.35; headline leads of
+think are best? Pilot answer (ours): yes — observer AUC 0.997 drops to
+0.25 sustained coverage; AC1 0.783 AUC drops to 0.35; headline leads of
 54-100 steps collapse to 21-33 sustained. The protocol, not a new detector,
 is the contribution.
 
-RQ3 (benchmark): Subject the standard suite — lag-1 AC, windowed variance,
-AR(1) likelihood (Boettiger-Hastings style), DEV-type eigenvalue estimates,
-deep-EWS classifiers (Bury et al. 2021), TIPMOC-style power-law fits — to
-the K-step sustained protocol on a common benchmark, reporting (coverage,
-sustained lead, FPR) instead of AUC.
+RQ3 (benchmark — PLANNED, not yet run): subject the field's own leading
+methods to the K-step sustained protocol on a common benchmark:
+  - DEV-type dominant-eigenvalue estimates (Grziwotz et al. 2023);
+  - a Bury-style deep-learning classifier (Bury et al. 2021; the public
+    code at github.com/ThomasMBury/deep-early-warnings-pnas is the
+    reference implementation);
+  - Boettiger-Hastings-style AR(1) likelihood detection (2012);
+  - TIPMOC-style power-law variance fits (Masuda 2026).
+Reporting (coverage, sustained lead, FPR) instead of AUC. Until DEV and a
+DL classifier are run through K0/K10 on our benchmark, the ranking-
+inversion claim is unproven for the methods reviewers care about most.
+
+System coverage (PLANNED): Bury et al. evaluate across fold, Hopf and
+transcritical bifurcations, and RCDyM across equilibria, cycles and chaotic
+dynamics. Our fold/Hopf/logistic trio is not directly comparable to their
+reported scores; a transcritical generator must be added to the benchmark
+(at minimum) for the related-work table to be matched on conditions.
+
+Seeds (PLANNED): a real seed sweep with confidence intervals on all
+quantities in section 5 (the two-seed pilot is not table-ready).
 
 RQ2 (separate track, optional): the model-side question of separating
 variance and autocorrelation so that a detector can measure the fold's
 true CSD (autocorrelation rise) rather than its equilibrium trend. This is
 independent of the protocol contribution.
 
+Real-world case study (FOLLOW-UP, not blocking): the strongest form of an
+evaluation-protocol paper has at least one applied re-analysis. Two
+candidates are publicly available: the AMOC fingerprint series of
+Ditlevsen & Ditlevsen (2023, data and code archived at ERDA
+https://erda.ku.dk/archives/cb78329f209d8ff2b4dd810abe4780ae/), and the
+quadrotor LOC data of Van Beers et al. (2026, 91 events). Either is a
+strong addition to the methods paper or a fast follow-up paper; it should
+not block submission.
+
+Order of operations (as advised): (1) run-rule framing + disambiguation
+[this document]; (2) seed sweep with CIs; (3) RQ3 baselines (DEV, DL
+classifier, B&H-style likelihood, TIPMOC-style) + transcritical generator;
+(4) decide the real-world case study after the core results are stable.
+
 ==================================================================
-## 7. Verified references
+## 8. Verified references
 ==================================================================
 
 1. Dakos, V. et al. (2008). Slowing down as an early warning signal for
@@ -299,6 +415,7 @@ independent of the protocol contribution.
 4. Ditlevsen, P. & Ditlevsen, S. (2023). Warning of a forthcoming collapse
    of the Atlantic meridional overturning circulation. Nat. Commun.
    14:4254. https://www.nature.com/articles/s41467-023-39810-w
+   Data/code: https://erda.ku.dk/archives/cb78329f209d8ff2b4dd810abe4780ae/
 5. Grziwotz, F. et al. (2023). Anticipating the occurrence and type of
    critical transitions. Sci. Adv. 9(1):eabq4558.
    https://www.science.org/doi/10.1126/sciadv.abq4558
@@ -312,15 +429,29 @@ independent of the protocol contribution.
    anticipate infectious disease outbreaks, a systematic review and guide.
    PLOS Glob. Public Health 3(10):e0002253.
    https://doi.org/10.1371/journal.pgph.0002253
-9. Kalinke, F. & Gavioli-Akilagun, S. (2025). Optimal Online Change
-   Detection via Random Fourier Features. NeurIPS 2025; arXiv:2505.17789.
-   https://arxiv.org/abs/2505.17789
-10. Van Beers, J.J. et al. (2026). Critical slowing down for predicting
+9. Delecroix, C., van Nes, E.H., Scheffer, M., van de Leemput, I.A. (2024).
+   Monitoring resilience in bursts. PNAS 121(31):e2407148121. [cited only
+   for disambiguation, section 2.6]
+   https://www.pnas.org/doi/10.1073/pnas.2407148121
+10. Kalinke, F. & Gavioli-Akilagun, S. (2025). Optimal Online Change
+    Detection via Random Fourier Features. NeurIPS 2025; arXiv:2505.17789.
+    https://arxiv.org/abs/2505.17789
+11. Van Beers, J.J. et al. (2026). Critical slowing down for predicting
     controller induced loss of control in quadrotors. arXiv:2607.25370.
     https://arxiv.org/abs/2607.25370
-11. Masuda, N. (2026). Detecting and forecasting tipping points from
+12. Masuda, N. (2026). Detecting and forecasting tipping points from
     sample variance alone (TIPMOC). arXiv:2602.10817.
     https://arxiv.org/abs/2602.10817
-12. Li et al. (2026). Ultra-Early Prediction of Tipping Points:
+13. Li et al. (2026). Ultra-Early Prediction of Tipping Points:
     Integrating Dynamical Measures with Reservoir Computing (RCDyM).
     arXiv:2603.14944. https://arxiv.org/abs/2603.14944
+14. Western Electric Company (1956). Statistical Quality Control Handbook.
+    Indianapolis: Western Electric Co. OCLC 33858387.
+    https://search.worldcat.org/title/33858387
+15. Champ, C.W. & Woodall, W.H. (1987). Exact Results for Shewhart Control
+    Charts With Supplementary Runs Rules. Technometrics 29(4):393-399.
+    https://www.tandfonline.com/doi/abs/10.1080/00401706.1987.10488266
+16. NIST/SEMATECH e-Handbook of Statistical Methods, 6.3.2 (WECO rules,
+    ARL 91.75). https://www.itl.nist.gov/div898/handbook/pmc/section3/pmc32.htm
+17. Wheeler, D.J. Contra Two Sigma. SPC Press.
+    https://spcpress.com/pdf/DJW255.pdf
