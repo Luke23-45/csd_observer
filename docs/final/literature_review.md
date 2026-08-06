@@ -1,6 +1,11 @@
 # Persistence-Aware Evaluation of Early Warning Signals: Literature Review
 
 Status: new research direction (the previous spectral-drift observer direction is closed).
+Finalized 2026-08-06 after supervisor review round 2: sourcing re-verified
+(Champ & Woodall 1987; NIST ARL0 = 91.75; Wheeler; Delecroix 2024 disambiguation);
+ERDA links corrected; the August 2025 AMOC Author Correction is noted and its
+corrected values used; section 6 now carries the closed-form Feller ARL0 for the
+protocol's own (threshold, K) pairs.
 Every citation below was verified against the primary source at the time of writing
 (URLs provided). Our own numbers come from the project benchmark experiments
 (seeds 101/202, classic generators, fixed-FPR calibration on validation nulls,
@@ -89,7 +94,10 @@ https://link.springer.com/article/10.1007/s11071-024-10023-0
 Ditlevsen & Ditlevsen (2023, Nature Communications 14:4254, AMOC) compute
 variance and lag-1 autocorrelation in running 50-year windows, compare
 against 95% confidence bands of a baseline, and — notably — *also provide a
-time-of-tipping estimator* (OU pseudo-likelihood; 2057 with CI 2034-2128).
+time-of-tipping estimator* (Strang-splitting pseudo-likelihood; corrected
+version: 2065, CI 2037-2109 — see the corrigendum note in section 8,
+ref. 4; the original 2057 / CI 2034-2128 values were revised by the 2025
+Author Correction and must not be quoted).
 The alarm claim is that the EWS "stay consistently above the upper limit of
 the confidence interval"; this is a qualitative persistence claim on a
 single realisation, not a systematic K-step protocol with controlled FPR.
@@ -132,10 +140,19 @@ Markov-chain methods by Champ & Woodall (1987, Technometrics 29(4):393-399)
 and confirmed in the NIST handbook ("adding the WECO rules increases the
 frequency of false alarms to about once in every 91.75 points, on the
 average"). Wheeler (SPC Press) gives the same ARL analysis in accessible
-form. The WE rule set is the K-of-N run-rule ancestor of the K0/K10
-protocol in this project: alarm = a run of points crossing a threshold,
-with a calibrated false-alarm rate, and with exact run-length theory
-available for analytical validation.
+form. Two precision points matter here. First, 91.75 is the ARL of the
+*four-rule WECO combination as a whole* (four different zone thresholds,
+OR'd together) — it is not the ARL of any single run rule and must not be
+quoted as the false-alarm rate of our protocol's K10 rule (section 6).
+Second, our K10 rule is simpler than the general multi-zone case Champ &
+Woodall solve: it is a single threshold with K consecutive exceedances —
+the classical waiting time for a run of k successes, which has a
+closed-form mean older than the Markov-chain treatment (Feller 1968,
+Vol. I, XIII.7): ARL0 = (1 - p^K) / (p^K (1 - p)) for iid per-step
+exceedance probability p. The WE rule set is the K-of-N run-rule ancestor
+of the K0/K10 protocol in this project: alarm = a run of points crossing a
+threshold, with a calibrated false-alarm rate, and with exact run-length
+theory available for analytical validation.
 
 The complementary sequential formalism is the CUSUM/Shiryaev-Roberts
 family with average-run-length (ARL) and average-detection-delay (ADD)
@@ -328,21 +345,60 @@ final repository harness with a proper seed sweep before publication.
 ## 6. Validation step: run-rule theory as an analytical check
 ==================================================================
 
-The run-rule provenance gives a validation instrument, not just a citation:
-under iid null noise, the false-alarm properties of a K-of-N run rule are
-exactly computable by Markov-chain methods (Champ & Woodall 1987). We will
-therefore sanity-check the empirical FPR-on-nulls calibration analytically:
+The run-rule provenance gives a validation instrument, not just a citation.
+Our alarm rules are single-threshold K-consecutive-exceedances tests —
+simpler than the multi-zone WECO combination — so their in-control
+run-length properties have a classical closed form, the mean waiting time
+for a run of k successes (Feller 1968, Vol. I, XIII.7). For iid per-step
+exceedance probability p and K consecutive exceedances:
 
-- For each (threshold, K) pair used in the protocol, compute the exact
-  in-control alarm probability / ARL of the corresponding run rule under
-  the null assumption of iid scores at the calibrated quantile, and
-  compare against the empirically measured FPR on null trajectories.
-- Discrepancy diagnostics: residual autocorrelation in windowed EWS scores
-  (the null scores are NOT iid — window overlap induces serial dependence)
-  is expected to inflate run-rule FPR relative to the iid formula; the
-  comparison quantifies that inflation and either justifies the empirical
-  calibration or forces a correction (e.g., block-based calibration or
-  effective-sample-size adjustment).
+    ARL0 = (1 - p^K) / (p^K (1 - p)),     per-step FPR_iid = p^K.
+
+(NB: 91.75 is NOT this quantity for K10. It is the ARL of the four-rule
+WECO combination OR'd together (section 2.5) and must not be quoted as our
+rule's false-alarm rate. Champ & Woodall's Markov-chain machinery is needed
+only for such multi-rule combinations; a single-threshold run rule needs no
+chain.)
+
+Values for the protocol's actual (threshold, K) pairs at the calibrated
+95th-percentile threshold (p = 0.05 per step):
+
+    (p, K)    ARL0 (iid)              per-step FPR_iid   P(false alarm on a
+                                                          200-step null)
+    (0.05, 1) 20 steps                0.05               ~ 1 (certain)
+    (0.05,10) ~1.1e13 steps           ~ 9.8e-14          ~ 2e-11 (never)
+
+The two rows make opposite points, and both do real work:
+
+- K0 (K=1): under iid nulls a single crossing is a *certain* event over a
+  200-step record (P = 1 - 0.95^200 ~ 1), which is exactly why the protocol
+  calibrates per-step FPR and why K0 coverage without per-step control is
+  meaningless. The iid per-step FPR equals the calibrated 0.05 by
+  construction, so this row is a calibration consistency check (factor ~ 1).
+- K10 (K=10): under iid nulls a sustained alarm is *essentially impossible*
+  (per-step FPR ~ 9.8e-14; expected false alarms per 200-step record
+  ~ 2e-11). The pilot nulls show per-step crossing FPRs of 0.05-0.1 for the
+  persistence detectors (section 5). Any empirical *sustained*-alarm rate
+  above the iid prediction is therefore, by definition, serial dependence
+  inherited from window overlap — the gap between the iid baseline and the
+  measured FPR is a measurement, not a caveat.
+
+The validation step (run with the seed sweep) therefore reports, per
+(threshold, K) pair used in the protocol:
+
+  - ARL0 and per-step FPR under the iid assumption (closed form above);
+  - the empirically measured per-step and per-trajectory FPR on test nulls;
+  - the ratio empirical / iid, reported as the serial-dependence factor
+    (equivalently: the effective number of independent samples per window
+    implied by the FPR inflation).
+
+Where the empirical rate exceeds the iid prediction, the comparison either
+justifies the empirical calibration as the honest operating point or forces
+a correction (e.g., block-based calibration or effective-sample-size
+adjustment). As an optional cross-check, Champ & Woodall's Markov-chain
+method reproduces the closed form and extends it to the multi-rule WECO
+combination (ARL0 = 91.75), tying the analytical check back to the
+industrial literature.
 
 This turns the SPC lineage from a liability (a reviewer will know the
 rules) into a methodological asset: the protocol inherits a checkable
@@ -389,10 +445,20 @@ Real-world case study (FOLLOW-UP, not blocking): the strongest form of an
 evaluation-protocol paper has at least one applied re-analysis. Two
 candidates are publicly available: the AMOC fingerprint series of
 Ditlevsen & Ditlevsen (2023, data and code archived at ERDA
-https://erda.ku.dk/archives/cb78329f209d8ff2b4dd810abe4780ae/), and the
-quadrotor LOC data of Van Beers et al. (2026, 91 events). Either is a
+https://erda.ku.dk/archives/cb78329f209d8ff2b4dd810abe4780ae/published-archive.html),
+and the quadrotor LOC data of Van Beers et al. (2026, 91 events). Either is a
 strong addition to the methods paper or a fast follow-up paper; it should
 not block submission.
+
+Corrigendum note (AMOC dataset): the AMOC paper carries an Author Correction
+of 21 August 2025 (Nat. Commun. 16:7794, doi:10.1038/s41467-025-63201-y)
+fixing a Strang-splitting MLE coding error (the flow was evaluated at
+t(i-1) instead of t(i)); the tipping-time estimate changes by 8 years and
+Figs. 5-7, Table 1 and the text were revised. Any case study must use the
+corrected version of the paper, its corrected estimates (2065, CI
+2037-2109) and the corrected code (archived separately at ERDA
+https://erda.ku.dk/archives/afce4e1c3ac6f0db61c27cb45c2e9b14/published-archive.html),
+citing the correction.
 
 Order of operations (as advised): (1) run-rule framing + disambiguation
 [this document]; (2) seed sweep with CIs; (3) RQ3 baselines (DEV, DL
@@ -415,7 +481,11 @@ classifier, B&H-style likelihood, TIPMOC-style) + transcritical generator;
 4. Ditlevsen, P. & Ditlevsen, S. (2023). Warning of a forthcoming collapse
    of the Atlantic meridional overturning circulation. Nat. Commun.
    14:4254. https://www.nature.com/articles/s41467-023-39810-w
-   Data/code: https://erda.ku.dk/archives/cb78329f209d8ff2b4dd810abe4780ae/
+   Data/code: https://erda.ku.dk/archives/cb78329f209d8ff2b4dd810abe4780ae/published-archive.html
+   Corrigendum (21 Aug 2025): Author Correction, Nat. Commun. 16:7794,
+   https://doi.org/10.1038/s41467-025-63201-y (Strang-splitting MLE error;
+   tipping-time estimate revised by 8 years). Corrected code:
+   https://erda.ku.dk/archives/afce4e1c3ac6f0db61c27cb45c2e9b14/published-archive.html
 5. Grziwotz, F. et al. (2023). Anticipating the occurrence and type of
    critical transitions. Sci. Adv. 9(1):eabq4558.
    https://www.science.org/doi/10.1126/sciadv.abq4558
@@ -455,3 +525,7 @@ classifier, B&H-style likelihood, TIPMOC-style) + transcritical generator;
     ARL 91.75). https://www.itl.nist.gov/div898/handbook/pmc/section3/pmc32.htm
 17. Wheeler, D.J. Contra Two Sigma. SPC Press.
     https://spcpress.com/pdf/DJW255.pdf
+18. Feller, W. (1968). An Introduction to Probability Theory and Its
+    Applications, Vol. I, 3rd ed. Wiley. (Chapter XIII, section 7:
+    waiting times for runs of successes — source of the closed-form
+    ARL0 used in section 6.)
