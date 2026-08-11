@@ -1,134 +1,165 @@
-# Implementation Ledger — Persistence-Aware CSD Evaluation Protocol
+# Implementation Ledger v2 — Persistence-Aware CSD Evaluation Protocol
 
-> Companion to `Implementation_plan.md`. Every task is atomic and verifiable. Status: `[ ]` pending, `[~]` in progress, `[x]` done, `[!]` blocked. Update status in place; do not rewrite history.
-
----
-
-## Phase 0 — Scaffolding & Hygiene
-
-- [ ] **L0.1** Add Hydra + OmegaConf + PyTorch-Lightning + requests + pydryad (or `requests`-based Dryad client) to `pyproject.toml`; bump Python pin to >=3.10 (already).
-- [ ] **L0.2** Create the empty package skeleton: `datasets/{common,tac,daphnia_ext,synthetic}/`, `models/{common,indicators/<7 sub>/,neural/}`, `training/common/`, `evaluation/{common,persistence}/`, `outputs/`, `orchestration/`, `cli/`. Each with `__init__.py` and a one-line module docstring.
-- [ ] **L0.3** Stub the persistence directories: `final_data/{tac,daphnia_ext,synthetic_fold,synthetic_hopf,synthetic_logistic}/{raw,processed}/` with `.gitkeep`. Add `final_data/` to `.gitignore` except manifests.
-- [ ] **L0.4** Create `outputs/_ledger/.gitkeep`; add `outputs/` to `.gitignore` except `_ledger/` and `.gitkeep`.
-- [ ] **L0.5** Freeze the current `studies/runner/benchmark.py` behavior behind a feature flag so all tests stay green during migration.
+> Companion to `Implementation_plan.md` v2. Status: `[ ]` pending, `[~]` in progress, `[x]` done, `[!]` blocked. Update in place. Phases close only when their **Definition of Done (DoD)** passes.
 
 ---
 
-## Phase 1 — Outputs system (self-contained, no orchestration coupling)
+## Phase 0 — Dependencies & Scaffolding
 
-- [ ] **L1.1** `outputs/schema.py`: define the canonical `results.jsonl` row dataclass + per-field validators; raise on missing/typed-wrong.
-- [ ] **L1.2** `outputs/writer.py`: port `utils/io.py::OutputWriter`; add the full canonical subtree creation (`resolved_config/ metrics/ results/ artifacts/ logs/ times/`); single-timestamp-per-run with `exist_ok=False` + collision failure.
-- [ ] **L1.3** `outputs/writer.py`: atomic JSONL append (write-tmp-then-rename within the run dir) so concurrent method drivers cannot corrupt `results.jsonl`.
-- [ ] **L1.4** `outputs/ledger.py`: append-only `outputs/_ledger/runs.jsonl` + `index.json` rebuilder. Row: `run_id, timestamp, name, dataset, methods, config_hash, git_sha, status, path`.
-- [ ] **L1.5** `tests/test_outputs_writer.py`: subtree creation, collision failure, atomicity, schema validation, ledger append.
-- [ ] **L1.6** Migrate `benchmark/suite.py` and `benchmark/experiments.py` writes onto the new writer; remove `utils/io.py`.
+- [ ] **L0.1** Add to `pyproject.toml` + install: `hydra-core`, `omegaconf`, `pytorch-lightning`, `torchmetrics`, `requests`, `nptdms`, `filelock`; commit lockfile.
+- [ ] **L0.2** Package skeleton (all with `__init__.py` + docstring): `datasets/{common,tac,daphnia_ext,synthetic/{common,fold,hopf,logistic}}`, `models/{common,indicators/{var_csd,ac1_csd,skew_csd,sratio_csd,retrate_csd,dfa_csd,dmd_csd},spectral_drift,neural/}`, `training/common`, `evaluation/{common,persistence}`, `outputs/common`, `orchestration`, `cli`, `config`.
+- [ ] **L0.3** Persistence roots: `final_data/<5 datasets>/{raw,processed}` + `.gitkeep`; `outputs/_ledger/.gitkeep`; `.gitignore` (keep manifests + `.gitkeep`, ignore data/artifacts).
+- [ ] **L0.4** Enforce the one-way import rule (§3 of plan) via ruff config + import-walk test.
 
----
-
-## Phase 2 — Evaluation package (the proposed protocol)
-
-- [ ] **L2.1** `evaluation/common/metrics.py`: move `utils/metrics.py` (DT, EW-AUC, FPR) verbatim; add bifurcation-type tagging on every returned dict.
-- [ ] **L2.2** `evaluation/common/calibration.py`: move `utils/evaluation.py` (calibrate_threshold, compute_null_metrics, per_traj_dts).
-- [ ] **L2.3** `evaluation/persistence/protocol.py`: implement the persistence post-filter — a method-agnostic filter that, given a `(B, T)` score stream + per-trajectory lengths + threshold, returns a `(B, T)` boolean alarm stream where an alarm is `True` only after `k_persist` consecutive scores >= threshold. Add the persistence-aware EW-AUC and persistence-aware DT.
-- [ ] **L2.4** `evaluation/persistence/governance.py`: the single governance pipeline every method runs through: `preprocess → score → calibrate(val-null) → persist → metrics → artifacts → row`. Both `evaluate_indicator` and `evaluate_spectral` collapse into this with a method-handle arg.
-- [ ] **L2.5** `config` (interim): add an `evaluation/persistenceaware.yaml` (k_persist=5, fpr_target=0.05) and `evaluation/baseline_classic.yaml` (k_persist=1, fpr_target=0.05) for the protocol-vs-classic ablation.
-- [ ] **L2.6** `tests/test_persistence_protocol.py`: synthetic score stream, assert k_persist behavior, assert persistence-aware DT > classic DT on noisy spikes, assert EW-AUC degrades gracefully.
-- [ ] **L2.7** `tests/test_governance_pipeline.py`: end-to-end on the synthetic fold fixture; assert one schema-valid row in `results.jsonl`.
-- [ ] **L2.8** Remove `utils/evaluation.py`, `utils/metrics.py`. Keep `utils/` only for genuine cross-cutting helpers.
+**DoD:** clean lockfile install; `import csd_observer` works; import-rule test green.
 
 ---
 
-## Phase 3 — Datasets package (automatic ingestion + persistent processing)
+## Phase 1 — Outputs (self-contained; no orchestration coupling)
 
-- [ ] **L3.1** `datasets/common/ingest.py`: the state machine (`CHECK_RAW → DOWNLOAD → VERIFY_CHECKSUM → EXTRACT → READY_RAW → PROCESS → SPLIT → READY_PROCESSED`), idempotent skip if `manifest.json` is present and valid. Support `dryad` and `manual` sources; stub `huggingface`/`kaggle` for later.
-- [ ] **L3.2** `datasets/common/checksum.py`: sha256 verification with structured error on mismatch.
-- [ ] **L3.3** `datasets/common/split.py`: per-replicate / per-trajectory split with deterministic seed; write split indices into the processed manifest.
-- [ ] **L3.4** `datasets/common/manifest.py`: read/write `final_data/<name>/processed/manifest.json` (dataset version, processing git-sha, params, split indices, feature schema, content hash).
-- [ ] **L3.5** `datasets/synthetic/`: relocate `data/bifurcation.py` here; keep behavior identical; add a `process.py` that calls the existing generator and writes the processed manifest, so synthetic data goes through the same `final_data/synthetic_*/processed/` pipeline as real data.
-- [ ] **L3.6** `datasets/tac/config.yaml`: name, source=dryad, doi=10.5061/dryad.4cj4k, licence=CC-BY, raw_format, expected_columns, bifurcation_type=subcritical_hopf, processing params (downsample, detrend, mode-amplitude extraction), split policy.
-- [ ] **L3.7** `datasets/tac/ingest.py`: Dryad DOI → download URL resolver; place archive in `final_data/tac/raw/`; verify checksum.
-- [ ] **L3.8** `datasets/tac/process.py`: parse rows, detrend, extract dominant acoustic-mode amplitude envelope per experimental run, normalize, replicate-aware split (train/val/test), write processed arrays + manifest.
-- [ ] **L3.9** `tests/test_tac_ingest.py`: mock the Dryad download with a tiny fixture; exercise the state machine end-to-end; assert manifest schema and splits.
-- [ ] **L3.10** `datasets/daphnia_ext/config.yaml`: name, source=dryad, doi=10.5061/dryad.q3p64, licence (open), raw_format, expected_columns, bifurcation_type=transcritical, processing params, split policy, transition-time annotation.
-- [ ] **L3.11** `datasets/daphnia_ext/ingest.py`: same Dryad flow as TAC; checksum-verified.
-- [ ] **L3.12** `datasets/daphnia_ext/process.py`: per-replicate Daphnia population trajectories, align on transition time, mark constant-environment controls as null class, replicate-aware split, write processed arrays + manifest.
-- [ ] **L3.13** `tests/test_daphnia_ingest.py`: same pattern as L3.9.
-- [ ] **L3.14** `datasets/registry.py`: `get_dataset(name, **overrides) -> DatasetBundle` returning a uniform `{"features", "seq_lengths", "bifurcation_times", "is_positive", "split_indices", "meta"}` dict (the current array contract) — so models/evaluation never branch on dataset type.
-- [ ] **L3.15** Remove `data/bifurcation.py` (relocated in L3.5); update `benchmark/suite.py` imports.
+- [ ] **L1.1** `outputs/schema.py` — row dataclass (§9.3); validator rejects missing/wrong-typed/unknown keys.
+- [ ] **L1.2** `outputs/writer.py` — canonical tree (§9.1); timestamp minted once; `exist_ok=False`; mid-run re-stamp assertion.
+- [ ] **L1.3** Lifecycle markers `.pending → .completed/.failed`; partial artifacts preserved on failure.
+- [ ] **L1.4** Atomic JSONL append (tmp+rename); schema-validated writes only.
+- [ ] **L1.5** `outputs/ledger.py` — append-only `runs.jsonl` + `index.json` rebuilder; status mirrors markers.
+- [ ] **L1.6** `outputs/metadata.py` — `environment.json` fingerprint (git, python, torch, hydra, dataset hashes, host).
+- [ ] **L1.7** `outputs/tables.py` + `summarize.py` — mean±std, bootstrap 95% CIs, paired Wilcoxon on P-DT; paper-ready CSVs → `tables/`.
+- [ ] **L1.8** `tests/test_outputs_*.py` — tree, collision, atomicity, schema rejection, ledger rebuild, lifecycle, summarize math vs hand-computed fixture.
+- [ ] **L1.9** Migrate `benchmark/` writes onto new writer; delete `utils/io.py`.
+
+**DoD:** L1 tests green; double-import smoke → exactly one timestamp dir; ledger shows `.completed`.
 
 ---
 
-## Phase 4 — Models package (common interface + relocate + neural baselines)
+## Phase 2 — Evaluation: persistence-aware protocol (the contribution)
 
-- [ ] **L4.1** `models/common/interface.py`: define `MethodMeta` (name, family, scope_caveat, is_learned) and the method protocol (`fit`, `score`, `meta`).
-- [ ] **L4.2** `models/common/registry.py`: `get_method(name)`, `list_methods()`, validate-method-name helper. Migrates `benchmark/methods.py::get_method`.
-- [ ] **L4.3** Relocate the seven indicators: `models/var_csd/` → `models/indicators/var_csd/` (and the other six) with the same `indicator.py` + `__init__.py` re-export. No behavior changes.
-- [ ] **L4.4** Adapt the proposed `SpectralDriftObserver` to the §4.1 interface (wrap `__call__` → `score`, no-op `fit`, set `scope_caveat`).
-- [ ] **L4.5** `tests/test_indicators_relocated.py`: re-run the existing per-indicator unit tests against the new location; behavior parity asserted.
-- [ ] **L4.6** Choose 2–3 modern SOTA neural CSD / time-series-early-warning baselines; record the citations in `docs/Implementation_plan/neural_baselines.md` (one short paragraph each: name, paper, why relevant, what makes it a fair baseline against the spectral-drift observer).
-- [ ] **L4.7** `models/neural/<baseline_1>/{model.py, lit_module.py, config.yaml, __init__.py}`: implement under the §4.1 interface; trained by `training/`; scored through `evaluation/persistence/governance.py`.
-- [ ] **L4.8** `models/neural/<baseline_2>/...`: same as L4.7.
-- [ ] **L4.9** (Optional) `models/neural/<baseline_3>/...`: same as L4.7.
-- [ ] **L4.10** `tests/test_neural_<b1>.py`, `tests/test_neural_<b2>.py`: smoke-train on a tiny synthetic fixture (1 epoch, n_trajectories=8) + assert scoring output shape and finite scores; no full-training tests here (those are e2e in Phase 6).
+- [ ] **L2.1** `evaluation/common/metrics.py` — migrate `utils/metrics.py` verbatim (DT, EW-AUC, FPR) + `bif_type` propagation; legacy signature kept for parity.
+- [ ] **L2.2** `evaluation/common/calibration.py` — migrate `utils/evaluation.py` (calibrate_threshold, null metrics, per-traj dts).
+- [ ] **L2.3** `evaluation/persistence/protocol.py` — §8.1–8.4: alarm indicator, causal run-length `r_t`, persistent alarm (`r_t ≥ k_persist`), P-DT, P-EW-AUC, i.i.d. null-anchor cross-check.
+- [ ] **L2.4** Censoring policy §8.2: `detection_rate` separate from `detection_time`; no ∞-averaging.
+- [ ] **L2.5** Achieved-FPR check §8.5: test-null step-FPR + persistent-FPR reported vs target; `PROTOCOL_DRIFT` warn >2×.
+- [ ] **L2.6** `evaluation/persistence/governance.py` — single driver §8.7; replaces `evaluate_indicator/evaluate_spectral` call sites.
+- [ ] **L2.7** `tests/test_persistence_protocol.py` — null-anchor bracket; monotonicity in `k_persist` (FPR↓, P-DT↑); `k_persist=1 ≡ classic`; censoring; causality (no future leakage).
+- [ ] **L2.8** `tests/test_governance.py` — e2e on synthetic fold fixture; schema-valid rows; achieved-FPR within 2× target.
+- [ ] **L2.9** Delete `utils/evaluation.py`, `utils/metrics.py` after parity.
+
+**DoD:** protocol property tests green; governance emits §9.3 rows with `detection_rate` + `persistent_fpr`; `k_persist=1` reproduces classic.
 
 ---
 
-## Phase 5 — Training package (Lightning, DL baselines only)
+## Phase 3 — Datasets: ingestion + processing
 
-- [ ] **L5.1** `training/common/trainer_factory.py`: `build_trainer(config, writer) -> LightningTrainer` with deterministic seeding, early stopping, checkpointing into `writer.path/artifacts/`, log into `writer.path/logs/`, LR scheduler from config.
-- [ ] **L5.2** `training/common/callbacks.py`: a `LedgerCallback` that records stage timings to `writer.path/times/timings.json` and updates the run ledger status on epoch end.
-- [ ] **L5.3** `training/common/losses.py`: the canonical DL baseline loss (binary alarm CE + persistence-aware regularization, or a contrastive early-vs-late loss — finalized here per the neural baseline choice in L4.6).
-- [ ] **L5.4** `tests/test_trainer_factory.py`: build a trainer on a dummy LightningModule, run 1 epoch on a tiny fixture, assert checkpoint + log files exist under a temp `OutputWriter`.
+- [ ] **L3.1** `datasets/common/errors.py` — error enum §5.2 + CLI exit codes.
+- [ ] **L3.2** `datasets/common/states.py` — state machine §5.2; idempotent skip on valid manifest; per-dataset `filelock`.
+- [ ] **L3.3** `datasets/common/dryad.py` — client: URL-encoded DOI → dataset → versions → files (pagination), anonymous metadata, bearer download (`DRYAD_API_TOKEN`), retries×3 exp-backoff, rate-limit aware.
+- [ ] **L3.4** `datasets/common/checksum.py` — md5 vs API digest or config-pinned MD5; mismatch → `INGEST_CHECKSUM`.
+- [ ] **L3.5** `datasets/common/manifest.py` — §5.5 manifest read/write/validate.
+- [ ] **L3.6** `datasets/common/split.py` — replicate-based splits (real data), deterministic, counts logged.
+- [ ] **L3.7** `datasets/tac/config.yaml` — verified facts (§4): DOI, file+size, MD5 `82cc5298…c34941`, licence CC0-1.0, bif_type subcritical_hopf; `expected_columns` marked to-validate.
+- [ ] **L3.8** `datasets/tac/ingest.py` — auto (token) + manual-drop paths (§5.3).
+- [ ] **L3.9** `datasets/tac/process.py` — unzip, TDMS parse (npTDMS), `Stationary*`/`Ramp*` sections, channel inspection, dominant acoustic-mode envelope, chunking policy (recorded), leak-free z-score.
+- [ ] **L3.10** `datasets/tac/validate.py` — gates §5.4: non-finite, length ≥ window max, annotation spot-check vs Bonciolini 2018, balance log.
+- [ ] **L3.11** `datasets/daphnia_ext/config.yaml` — verified facts: 2 files (MD5 `923e08e6…2ac7`, `11770ce4…40c5`), licence, bif_type transcritical.
+- [ ] **L3.12** `datasets/daphnia_ext/ingest.py` — auto + manual modes.
+- [ ] **L3.13** `datasets/daphnia_ext/process.py` — parse README (treatment coding), per-replicate daily counts, deteriorating=signal / constant=null, align on transition (t=0), replicate-based split.
+- [ ] **L3.14** `datasets/daphnia_ext/validate.py` — gates; annotation consistent with Nature 467:456 (~110 days pre-extinction).
+- [ ] **L3.15** `datasets/synthetic/` — `data/bifurcation.py` → `synthetic/common/`; per-system wrappers; same manifest pipeline (provenance=generator/difficulty/params).
+- [ ] **L3.16** `datasets/registry.py` — uniform bundle §5.6; delete `data/`; patch imports.
+- [ ] **L3.17** `tests/test_ingest_*.py` — mocked-Dryad fixtures (digests): success, checksum mismatch, auth fail, rate-limit retry, manual timeout, manifest-skip, lock.
+- [ ] **L3.18** Sandbox real-data dry-run: TAC archive → READY_PROCESSED + manifest (download once, cached).
+
+**DoD:** TAC + DaphniaExt processed + manifests in sandbox; synthetic identical contract; every gate code tested; no network in CI.
+
+---
+
+## Phase 4 — Models
+
+- [ ] **L4.1** `models/common/interface.py` — `MethodMeta`, `MethodInterface` (fit/score/meta) §6.1.
+- [ ] **L4.2** `models/common/registry.py` — supersedes `benchmark/methods.py`; name validation + catalog cross-check retained.
+- [ ] **L4.3** Relocate 7 indicators (§6.2); zero behavior change; **parity gate**: existing per-indicator tests pass at new paths.
+- [ ] **L4.4** Wrap spectral-drift to interface; no-op `fit`; `scope_caveat` set; README (chunking + precision policy, verified in Phase 8).
+- [ ] **L4.5** `docs/Implementation_plan/neural_baselines.md` — pin 2–3 families (§6.4: recurrent alarm net, TCN, patch-transformer) with fact-checked citations, objectives, capacity budget, fairness rationale. No fabricated numbers.
+- [ ] **L4.6** Implement `models/neural/<b1|b2|b3>/{model.py, lit_module.py, config.yaml}` under the fairness contract.
+- [ ] **L4.7** `tests/test_indicators_parity.py` + `tests/test_neural_*.py` — 1-epoch smoke (8 trajectories), score shapes, finite scores.
+
+**DoD:** parity green; each neural baseline smoke-runs; citations fact-checked.
+
+---
+
+## Phase 5 — Training
+
+- [ ] **L5.1** `training/common/trainer_factory.py` — deterministic seeding (torch/numpy/workers), early stopping, `artifacts/checkpoints/`, scheduler, `logs/`.
+- [ ] **L5.2** `training/common/callbacks.py` — `LedgerCallback` (timings, status), fingerprint at fit start.
+- [ ] **L5.3** `training/common/losses.py` — alarm BCE + persistence-aware smoothing; finalized with L4.5.
+- [ ] **L5.4** `tests/test_trainer_factory.py` — 1-epoch dummy under temp `OutputWriter`; checkpoint + logs + timings; same-seed → identical loss curve.
+
+**DoD:** L5.4 green incl. determinism.
 
 ---
 
 ## Phase 6 — Configuration (Hydra + OmegaConf)
 
-- [ ] **L6.1** `config/store.py`: register Hydra `ConfigStore` groups: `dataset` (tac, daphnia_ext, synthetic_fold, synthetic_hopf, synthetic_logistic), `model` (spectral_drift, var_csd, ac1_csd, …, neural_<b1>, neural_<b2>), `training` (default, large, none), `evaluation` (persistenceaware, baseline_classic), `run` (composed), `output` (default).
-- [ ] **L6.2** Migrate `configs/data/default.yaml` → `configs/dataset/synthetic_*.yaml` (one per system + a `defaults` common file); keep the field names.
-- [ ] **L6.3** Migrate `configs/model/default.yaml` into Hydra model-group files (one per method).
-- [ ] **L6.4** Migrate `configs/training/default.yaml` into `configs/training/default.yaml` already aligned with Hydra group naming.
-- [ ] **L6.5** Migrate `configs/run/*.yaml` runs into Hydra composed runs (`+dataset=… +model=… +evaluation=…`).
-- [ ] **L6.6** `config/validate.py`: cross-group invariants (`is_learned=true ⇒ training != none`; `evaluation=k_persist >= 1`; `dataset ∈ registry`); fail fast.
-- [ ] **L6.7** Remove the legacy `config/load.py` PyYAML-template loader; delete `configs/run/default.yaml`, `high_noise.yaml`, `low_data.yaml`, `patients_*.yaml`.
-- [ ] **L6.8** `tests/test_config_compose.py`: compose every documented run; assert resolved config has all required keys; assert the catalog cross-check still passes.
+- [ ] **L6.1** `config/store.py` — ConfigStore groups as structured dataclasses (§10.1).
+- [ ] **L6.2** Migrate `configs/{data,model,training,run}/*` → `configs/{dataset,model,training,evaluation,run}/*`; `tac.yaml`/`daphnia_ext.yaml` carry §4 facts.
+- [ ] **L6.3** `config/validate.py` — invariants §10.3 fail-fast.
+- [ ] **L6.4** Dataset-key override whitelist; `--multirun` semantics (per-job timestamp).
+- [ ] **L6.5** Delete legacy `config/load.py` + old run yamls; patch call sites.
+- [ ] **L6.6** `tests/test_config_compose.py` — every documented run composes; bad key / missing group / unknown method / `is_learned=true,training=none` rejected.
+
+**DoD:** compose smoke green for every run in master matrix; invariant tests green.
 
 ---
 
-## Phase 7 — Orchestration + CLI
+## Phase 7 — Orchestration, CLI, E2E
 
-- [ ] **L7.1** `cli/main.py`: Hydra entry point `@hydra.main(config_path="../configs", config_name="run")`. Resolves config, constructs `OutputWriter`, writes `resolved_config/resolved.yaml`, dispatches to `orchestration/runner.py`.
-- [ ] **L7.2** `orchestration/runner.py`: the only place that knows the pipeline order (dataset registry → method registry → training-if-learned → governance pipeline → writer → ledger). **No** metric, output, or model logic.
-- [ ] **L7.3** `studies/runner/benchmark.py`: replace body with `from csd_observer.cli.main import main; main()` shim for backward compat.
-- [ ] **L7.4** Remove `benchmark/` package entirely (its responsibilities are now in `evaluation/persistence/governance.py`, `models/common/registry.py`, `orchestration/runner.py`).
-- [ ] **L7.5** `tests/test_e2e_persistence_protocol.py`: smoke run `+dataset=synthetic_fold +model=var_csd +evaluation=persistenceaware` with `n_seeds=1`; assert canonical output tree, ledger row, schema-valid `results.jsonl`, manifest present, no real-data download.
+- [ ] **L7.1** `cli/main.py` — hydra entry point (§11).
+- [ ] **L7.2** `orchestration/runner.py` — pipeline order only.
+- [ ] **L7.3** `studies/runner/benchmark.py` → shim to CLI; removed later.
+- [ ] **L7.4** Delete `benchmark/` (methods → `models/common/registry`; evaluation → `evaluation/persistence/governance`; suite → orchestration).
+- [ ] **L7.5** `tests/test_e2e_smoke.py` — `+dataset=synthetic_fold +models=var_csd +evaluation=persistenceaware n_seeds=1`: canonical tree, `.completed`, ledger row, schema-valid rows, no network.
 
----
-
-## Phase 8 — Real-data runs (the paper's experiments)
-
-- [ ] **L8.1** Run the proposed observer on TAC: `+dataset=tac +model=spectral_drift +evaluation=persistenceaware`. Save to `outputs/spectral_drift_tac_<timestamp>/`.
-- [ ] **L8.2** Run every statistical indicator + every neural baseline on TAC under the same `evaluation=persistenceaware` config (one run per method, fixed training config for the learned ones).
-- [ ] **L8.3** Repeat L8.1–L8.2 for DaphniaExt.
-- [ ] **L8.4** Repeat L8.1–L8.2 for synthetic fold / Hopf / logistic (control channel) — the existing `patients_*` sweep, now under the new CLI.
-- [ ] **L8.5** Run the protocol-vs-classic ablation: every (dataset, method) pair under `evaluation=persistenceaware` and `evaluation=baseline_classic`. Persist as two separate runs; the paper contrasts them.
-- [ ] **L8.6** Verify ledger `index.json` enumerates every run; verify each run has `resolved_config/resolved.yaml`, `metrics/metrics.json`, `results/results.jsonl`, `times/timings.json`.
+**DoD:** e2e smoke green in CI; `--multirun` over 2 seeds → 2 distinct timestamps, one run name.
 
 ---
 
-## Phase 9 — Verification, reproducibility, cleanup
+## Phase 8 — Real-Data Runs (paper experiments)
 
-- [ ] **L9.1** Single-page `README.md` rewrite: Hydra-CLI usage, real + synthetic dataset commands, link to `docs/Implementation_plan/`.
-- [ ] **L9.2** `AGENTS.md`: pin the canonical commands — `pytest`, `ruff check .`, the Hydra smoke run, the real-data ingestion commands — so future sessions run them without rediscovery.
-- [ ] **L9.3** Full repo `pytest -v` green; `ruff check .` clean; one Hydra smoke run green; one TAC + one DaphniaExt real-data run green with manifests.
-- [ ] **L9.4** Remove `legacy/` and `studies/` (after `studies/runner/benchmark.py` shim is replaced in L7.3); archive a tagged commit reference in the ledger.
-- [ ] **L9.5** Pin git tag `v0.2.0-protocol` once Phase 8's runs are reproducible from a clean checkout.
+Master matrix — every cell needs a run dir + ledger rows:
+
+| Runs | Observer | 7 indicators | 2–3 neural | classic vs persistence |
+|---|---|---|---|---|
+| TAC | ✅ | ✅ | ✅ | ✅ |
+| DaphniaExt | ✅ | ✅ | ✅ | ✅ |
+| Synthetic fold / hopf / logistic (control) | ✅ | ✅ | ✅ | ✅ |
+
+- [ ] **L8.1** TAC: `+dataset=tac +models=spectral_drift +evaluation=persistenceaware` (+ classic twin at `k_persist=1`).
+- [ ] **L8.2** TAC: all indicators + neural baselines under both evaluations.
+- [ ] **L8.3** DaphniaExt: same matrix.
+- [ ] **L8.4** Synthetic control channel under both evaluations (replaces `patients_*` sweep).
+- [ ] **L8.5** Verify per run: `resolved_config/`, `metadata/`, `protocol_checks.json`, `tables/` present; ledger `index.json` enumerates all runs.
+
+**DoD:** every matrix cell has a `.completed` run; C1–C5 evidence (§1 of plan) exists on disk.
 
 ---
 
-## Cross-cutting risks (track explicitly)
+## Phase 9 — Verification, Reproducibility, Cleanup
 
-- [ ] **R1** Dryad download throttling / rate limits — mitigate with retries + cache-on-success; never re-download a verified raw archive.
-- [ ] **R2** Real-data ground truth: TAC and DaphniaExt transition annotations come from the source papers; record the annotation source + page/figure in each dataset's `config.yaml`.
-- [ ] **R3** Scope creep: the observer is theoretically fold-only. Every reported table must carry `bifurcation_type` so empirical-regime results are never silently pooled with fold results.
-- [ ] **R4** Single-timestamp invariant: any code path that re-stamps the run timestamp mid-run is a bug; add an assertion in `OutputWriter` that the root path matches the constructor's.
+- [ ] **L9.1** README rewrite: Hydra-CLI usage, real + synthetic commands, link to `docs/Implementation_plan/`.
+- [ ] **L9.2** `AGENTS.md`: pin canonical commands (`pytest`, `ruff check .`, hydra smoke, ingest dry-run) so future sessions don't rediscover them.
+- [ ] **L9.3** Full `pytest -v` green; `ruff check .` clean; hydra smoke green; TAC + DaphniaExt sandbox runs green with manifests.
+- [ ] **L9.4** Remove `legacy/` and `studies/` (after L7.3 shim); ledger references archived commit.
+- [ ] **L9.5** Tag `v0.2.0-protocol` once Phase 8 runs are reproducible from a clean checkout.
+
+**DoD:** clean-checkout reproduction of one TAC cell + one DaphniaExt cell + one synthetic cell.
+
+---
+
+## Cross-Cutting Risks (track explicitly)
+
+- [ ] **R1** Dryad download auth: file download needs `DRYAD_API_TOKEN` (verified). Mitigate: manual-drop fallback with config-pinned MD5s; document token setup in README.
+- [ ] **R2** TAC TDMS internals (channels, sample rate, units) unknown until inspected. Mitigate: `expected_columns` validated at ingest, never assumed; chunking policy recorded in manifest.
+- [ ] **R3** DaphniaExt zip layout / README coding unknown until inspected. Mitigate: parse README first; replicate labels validated against paper description (deteriorating vs constant).
+- [ ] **R4** Real-data replicate counts are small → split imbalance risk. Mitigate: replicate-level splits, balance logged, bootstrap CIs over replicates.
+- [ ] **R5** Observer scope: theoretically fold-only. Mitigate: `bif_type` in every row; empirical-regime results never pooled with fold.
+- [ ] **R6** Single-timestamp invariant. Mitigate: writer assertion (mid-run re-stamp = bug) + `.pending/.completed` markers.
+- [ ] **R7** Processed-data staleness. Mitigate: content hash in manifest; pipeline change invalidates cache, never silently reuses stale data.
