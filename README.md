@@ -1,49 +1,100 @@
-# CSD Observer: Adaptive Critical-Slowing-Down Observer
+# CSD Observer
 
-Rao-Blackwellised particle filter over the spectral gap `c_k`, producing an
-early-warning alarm from the posterior collapse probability `Pr(c_{t+1} < δ | y_{0:t})`.
-Non-learned (no trainable parameters, buffers only).
+Persistence-aware early-warning evaluation of critical-slowing-down
+(CSD) observers. One Hydra-composed pipeline runs ten benchmark methods
+(spectral-drift observer, seven published CSD indicators, two neural
+baselines) against synthetic bifurcation datasets and real Dryad
+datasets (TAC, DaphniaExt) under a fixed-FPR persistence-aware protocol.
 
-## Requirements
-
-- Python >= 3.10
-- PyTorch >= 2.0
-- numpy, scikit-learn, pyyaml, tqdm
-
-Install: `pip install -e .`
-
-## Project Structure
-
-```
-src/csd_observer/       # core package
-├── config/load.py     # config loading (modular YAML merging)
-├── models/            # spectral_drift/ package (observer, preprocess, grid search)
-├── data/              # synthetic bifurcation generators
-└── utils/             # metrics, OutputWriter
-configs/               # YAML configs (data, model, run)
-studies/runner/        # entry points (benchmark, diagnostics)
-analysis/              # results analysis (classical baseline pipeline)
-outputs/               # experiment results
-```
-
-## Usage
+## Install
 
 ```bash
-# Install
 pip install -e .
-
-# Default benchmark (patients_100..patients_500 and high_noise)
-python studies/runner/benchmark.py
-
-# Specific configs
-python studies/runner/benchmark.py patients_100
-
-# Spectral-drift diagnostics report
-python studies/runner/diagnose_spectral_drift.py
 ```
 
-## Evaluation
+Requires Python >= 3.10 and PyTorch >= 2.0.
 
-Per (system, patient-count): early-warning AUC (max collapse probability in
-`[τ-50, τ-5)` vs null terminal windows), detection time at a validation-selected
-threshold (fixed null FPR 0.05), and per-step null false-positive rate.
+## Usage (Hydra CLI)
+
+The entry point is `@hydra.main(config_path="configs", config_name="run")`:
+
+```bash
+# Installed console script
+csd-observer
+
+# Or directly (same entry point)
+python -m csd_observer
+
+# Small fast runs (tiny synthetic dataset, indicators only)
+csd-observer "dataset.n_trajectories=16" "dataset.max_length=64" "training=none"
+csd-observer "dataset.n_trajectories=16" "dataset.max_length=64" "models=[VAR-CSD,AC1-CSD,DMD-CSD]" "training=none"
+
+# Spectral-drift observer
+csd-observer "dataset.n_trajectories=16" "dataset.max_length=64" "model=spectral_drift" "models=[Kalman-Spectral-Drift]" "training=none"
+
+# Learned neural baseline (needs training)
+csd-observer "models=[LSTM-AlarmNet]"
+```
+
+### Groups
+
+| Group | Options |
+|---|---|
+| `dataset` | `synthetic_fold`, `synthetic_hopf`, `synthetic_logistic`, `tac`, `daphnia_ext` |
+| `model` | `default` (all blocks), `spectral_drift`, or one of `{var,ac1,skew,sratio,retrate,dfa,dmd}_csd`, `lstm`, `tcn` |
+| `training` | `default`, `none` |
+| `evaluation` | `persistenceaware`, `baseline_classic` |
+| `output` | `default` |
+
+`models` (run-level) selects which methods run — display names from
+`csd_observer.models.common.registry` (e.g. `VAR-CSD`,
+`Kalman-Spectral-Drift`, `LSTM-AlarmNet`). Dataset generation knobs go
+through the whitelist with Hydra `+` syntax:
+
+```bash
+csd-observer "+dataset_overrides.n_trajectories=500" "+dataset_overrides.max_length=200"
+```
+
+## Output tree
+
+Each run writes `outputs/<run_name>/<timestamp>/`:
+
+```
+resolved_config/  resolved.yaml, cli_overrides.yaml
+metadata/         environment.json
+metrics/          metrics.json, protocol_checks.json
+results/          results.jsonl (+ trajectories/, epoch_logs/ when enabled)
+artifacts/        checkpoints/, calibration/
+logs/             run.log
+times/            timings.json
+tables/           aggregates.csv, bootstrap_ci.csv, paired_wilcoxon.csv
+```
+
+plus a `.completed`/`.failed` lifecycle marker and an append-only ledger
+at `outputs/_ledger/runs.jsonl` with an `index.json` mirror.
+
+## Project structure
+
+```
+configs/                 # Hydra groups (dataset, model, training, evaluation, output) + run.yaml
+src/csd_observer/
+  cli/                   # @hydra.main entry point
+  config/                # ConfigStore (structured dataclasses) + §10.3 fail-fast validation
+  datasets/              # registry, synthetic generators, real-data ingest/manifest pipeline
+  evaluation/            # metric primitives, calibration, persistence-aware governance
+  models/                # registry, indicators/, spectral_drift/, neural/ (LSTM, TCN)
+  orchestration/         # runner (pipeline order only)
+  outputs/               # writer, ledger, schema, summarizer, tables
+  training/              # Lightning training for neural baselines
+docs/Implementation_plan/  # plan + status ledger (authoritative for phases)
+tests/                   # pytest suite (config compose, e2e smoke, indicators, spectral)
+```
+
+## Evaluation protocol
+
+Persistence-aware governance (plan §8): thresholds are calibrated on the
+validation split at fixed null step-FPR (`fpr_target`), alarms must
+persist `k_persist` consecutive steps to fire, and per-run protocol
+checks are written to `metrics/protocol_checks.json`. Reported metrics
+per (method, seed): detection rate, detection time (mean/median/std),
+classic EW-AUC, step-FPR, persistent-FPR, and persistence EW-AUC.

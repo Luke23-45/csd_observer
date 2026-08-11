@@ -6,7 +6,7 @@ import numpy as np
 
 
 def _retrate(features, seq_lengths, window_size=30):
-    from csd_observer.models.retrate_csd.indicator import raw_retrate_indicator
+    from csd_observer.models.indicators.retrate_csd.indicator import raw_retrate_indicator
     return raw_retrate_indicator(features, seq_lengths, window_size)
 
 
@@ -93,7 +93,7 @@ def test_retrate_deterministic() -> None:
 
 
 def test_retrate_matches_manual_ols_formula() -> None:
-    from csd_observer.utils.metrics import _linear_detrend
+    from csd_observer.models.common.detrend import _linear_detrend
 
     rng = np.random.default_rng(9)
     B, n = 4, 30
@@ -109,7 +109,7 @@ def test_retrate_matches_manual_ols_formula() -> None:
 
 
 def test_retrate_uses_ols_not_yule_walker() -> None:
-    from csd_observer.utils.metrics import _linear_detrend
+    from csd_observer.models.common.detrend import _linear_detrend
 
     rng = np.random.default_rng(10)
     B, n = 10, 30

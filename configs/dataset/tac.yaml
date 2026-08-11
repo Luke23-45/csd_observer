@@ -1,0 +1,17 @@
+name: tac
+source: dryad
+doi: 10.5061/dryad.4cj4k
+licence: CC0-1.0
+bif_type: subcritical_hopf
+archive_type: zip
+parser: nptdms
+expected_files:
+  - path: Experimental_time_traces_tdms.zip
+    size: 302008984
+    md5: 82cc5298c245ad509e1ee414e2c34941
+download:
+  mode: manual
+  env_token_var: DRYAD_API_TOKEN
+  retries: 3
+  wait_minutes: 10
+  poll_interval_sec: 5

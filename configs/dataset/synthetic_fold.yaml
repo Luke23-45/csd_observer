@@ -1,0 +1,8 @@
+name: synthetic_fold
+source: synthetic
+bif_type: fold
+generator: classic
+difficulty: standard
+n_trajectories: 500
+max_length: 200
+seed: 42

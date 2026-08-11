@@ -6,7 +6,7 @@ import numpy as np
 
 
 def _var(features, seq_lengths, window_size=30):
-    from csd_observer.models.var_csd.indicator import raw_var_indicator
+    from csd_observer.models.indicators.var_csd.indicator import raw_var_indicator
     return raw_var_indicator(features, seq_lengths, window_size)
 
 
@@ -92,7 +92,7 @@ def test_var_deterministic() -> None:
 
 
 def test_var_matches_manual_formula() -> None:
-    from csd_observer.utils.metrics import _linear_detrend
+    from csd_observer.models.common.detrend import _linear_detrend
 
     rng = np.random.default_rng(9)
     n = 30

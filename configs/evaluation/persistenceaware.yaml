@@ -1,0 +1,5 @@
+name: persistenceaware
+k_persist: 5
+fpr_target: 0.05
+early_start_delta: 50
+early_end_delta: 5

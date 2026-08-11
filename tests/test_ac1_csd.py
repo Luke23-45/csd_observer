@@ -6,7 +6,7 @@ import numpy as np
 
 
 def _ac1(features, seq_lengths, window_size=30):
-    from csd_observer.models.ac1_csd.indicator import raw_ac1_indicator
+    from csd_observer.models.indicators.ac1_csd.indicator import raw_ac1_indicator
     return raw_ac1_indicator(features, seq_lengths, window_size)
 
 
@@ -153,7 +153,7 @@ def test_ac1_is_pearson_not_acf_estimator() -> None:
     x = np.zeros(n)
     for t in range(1, n):
         x[t] = phi * x[t - 1] + rng.normal(0.0, 0.2)
-    from csd_observer.utils.metrics import _linear_detrend
+    from csd_observer.models.common.detrend import _linear_detrend
 
     seg = _linear_detrend(x)
     a = seg[:-1] - seg[:-1].mean()

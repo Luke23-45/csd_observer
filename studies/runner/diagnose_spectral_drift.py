@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
@@ -39,19 +38,49 @@ for p in (str(_SRC), str(_ROOT)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from csd_observer.data.bifurcation import build_dataset  # noqa: E402
+from csd_observer.datasets.synthetic.common.generators import build_dataset  # noqa: E402
+from csd_observer.evaluation.common.metrics import (  # noqa: E402
+    W_LABEL,
+    compute_detection_time,
+    compute_early_warning_auc,
+    compute_false_positive_rate,
+)
 from csd_observer.models.spectral_drift import (  # noqa: E402
     SpectralDriftObserver,
     extract_mode,
     grid_search_q_drift,
     running_mean_center,
 )
-from csd_observer.utils.metrics import (  # noqa: E402
-    compute_detection_time,
-    compute_early_warning_auc,
-    compute_false_positive_rate,
-    select_threshold,
-)
+
+
+def _youden_threshold(probs: np.ndarray, bifs: np.ndarray,
+                      is_pos: np.ndarray, seq_lens: np.ndarray) -> float:
+    """Youden's-J threshold over labelled steps (study-local; legacy
+    ``utils.metrics.select_threshold`` was removed with the legacy
+    package at L7.4)."""
+    from sklearn.metrics import roc_curve
+
+    positives = is_pos & (bifs > 0)
+    if not positives.any():
+        return 0.5
+    scores: list[float] = []
+    labels: list[int] = []
+    for i in np.where(positives)[0]:
+        tau = int(bifs[i])
+        T = int(seq_lens[i])
+        window = max(0, int(tau - W_LABEL))
+        for t in range(window, min(T, tau)):
+            scores.append(float(probs[i, t]))
+            labels.append(1)
+        far_window = max(0, int(tau - 2 * W_LABEL))
+        for t in range(0, max(far_window - 1, 0)):
+            scores.append(float(probs[i, t]))
+            labels.append(0)
+    if len(set(labels)) < 2 or np.std(np.array(scores)) < 1e-6:
+        return 0.5
+    _fpr, tpr, thresholds = roc_curve(labels, scores)
+    best = int(np.argmax(tpr - _fpr))
+    return float(thresholds[best])
 
 OBS_NOISE = {"fold": 0.10, "hopf": 0.15, "logistic": 0.05}
 N_PARTICLES = 300
@@ -91,7 +120,7 @@ def rolling_var(seq: np.ndarray, window: int = WINDOW) -> np.ndarray:
 # model-fit diagnostics (static-c likelihood)
 # --------------------------------------------------------------------- #
 def static_c_nll(y: np.ndarray, c_grid: np.ndarray, *, sigma_u: float,
-                 r_var: float, dt: float = 1.0) -> Tuple[np.ndarray, float]:
+                 r_var: float, dt: float = 1.0) -> tuple[np.ndarray, float]:
     """Per-step NLL of the data under the model with FIXED gap c.
 
     Runs a scalar Kalman filter over ``u`` for each candidate c and
@@ -125,8 +154,8 @@ def ew_auc_window(probs_sig: np.ndarray, bifs: np.ndarray, lens_sig: np.ndarray,
                   probs_null: np.ndarray, lens_null: np.ndarray,
                   *, w: float) -> float:
     """EW-AUC using max over [tau - w, tau - 5] (benchmark definition)."""
-    scores: List[float] = []
-    labels: List[int] = []
+    scores: list[float] = []
+    labels: list[int] = []
     for i in range(len(probs_sig)):
         tau = bifs[i]
         t_start = max(0, int(tau - w))
@@ -156,7 +185,7 @@ def auc_of_scores(sig_score: np.ndarray, null_score: np.ndarray) -> float:
 
 def _tracking_corr(c_hat: np.ndarray, ar1: np.ndarray) -> float:
     """Median per-patient correlation between c_hat and rolling AR1."""
-    corrs: List[float] = []
+    corrs: list[float] = []
     for i in range(c_hat.shape[0]):
         mask = ~np.isnan(ar1[i])
         if mask.sum() < 50:
@@ -169,7 +198,7 @@ def _tracking_corr(c_hat: np.ndarray, ar1: np.ndarray) -> float:
 # per-system diagnostics
 # --------------------------------------------------------------------- #
 def diagnose_system(system: str, n_patients: int, device: torch.device,
-                    report: List[str]) -> None:
+                    report: list[str]) -> None:
     sep = "=" * 74
     report.append(f"\n{sep}\n## SYSTEM: {system}\n{sep}\n")
 
@@ -203,7 +232,6 @@ def diagnose_system(system: str, n_patients: int, device: torch.device,
     ar_null = rolling_ar1(mode_null)
     var_sig = rolling_var(mode_sig)
     var_null = rolling_var(mode_null)
-    t_of = np.arange(200, dtype=float)
     mean_ar_sig = np.nanmean(ar_sig[test_s], axis=0)
     mean_ar_null = np.nanmean(ar_null[test_n], axis=0)
     mean_var_sig = np.nanmean(var_sig[test_s], axis=0)
@@ -259,7 +287,7 @@ def diagnose_system(system: str, n_patients: int, device: torch.device,
     ).to(device)
     obs.eval()
 
-    def run(y: np.ndarray) -> Dict[str, np.ndarray]:
+    def run(y: np.ndarray) -> dict[str, np.ndarray]:
         x = torch.from_numpy(np.asarray(y, dtype=np.float32)).to(device)
         with torch.no_grad():
             out = obs(x)
@@ -319,7 +347,7 @@ def diagnose_system(system: str, n_patients: int, device: torch.device,
                                     lens_s[test_s], th)
         fpr = compute_false_positive_rate(probs_null, lens_n[test_n], th)
         report.append(f"| p{p*100:.0f} = {th:.3f} | {dt:.1f} | {fpr:.4f} |")
-    th_youden = select_threshold(
+    th_youden = _youden_threshold(
         probs_test, bifs[test_s], arrays_signal["is_positive"][test_s],
         lens_s[test_s],
     )
@@ -334,7 +362,7 @@ def diagnose_system(system: str, n_patients: int, device: torch.device,
     report.append("| variant | threshold | DT | AUC | FPR |")
     report.append("|---------|-----------|----|-----|-----|")
 
-    def eval_variant(variant: Dict[str, float], label: str) -> None:
+    def eval_variant(variant: dict[str, float], label: str) -> None:
         o = SpectralDriftObserver(
             sigma_u=variant.get("sigma_u", sigma_u),
             r=variant.get("r", r_var),
@@ -392,7 +420,7 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     n_patients = 100
-    report: List[str] = [f"# Spectral-Drift Diagnostics (patients_100)\n"]
+    report: list[str] = ["# Spectral-Drift Diagnostics (patients_100)\n"]
     for system in ["fold", "hopf", "logistic"]:
         diagnose_system(system, n_patients, device, report)
 

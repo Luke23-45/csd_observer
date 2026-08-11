@@ -6,7 +6,7 @@ import numpy as np
 
 
 def _dmd(features, seq_lengths, window_size=30, embedding_dim=6, rank=2):
-    from csd_observer.models.dmd_csd.indicator import raw_dmd_indicator
+    from csd_observer.models.indicators.dmd_csd.indicator import raw_dmd_indicator
     return raw_dmd_indicator(features, seq_lengths, window_size, embedding_dim, rank)
 
 
@@ -33,7 +33,7 @@ def _ar2(rng, rho, omega, B, T):
 
 def _manual_dmd(seg, m=6, rank=2):
     """Independent from-scratch SVD-DMD: |lambda_max| of U^T X2 V S^{-1}."""
-    from csd_observer.utils.metrics import _linear_detrend
+    from csd_observer.models.common.detrend import _linear_detrend
 
     seg = _linear_detrend(seg)
     snap = np.stack([seg[k : k + m] for k in range(len(seg) - m + 1)])

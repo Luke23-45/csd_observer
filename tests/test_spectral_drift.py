@@ -329,7 +329,7 @@ def test_grid_search_sigma_u_q_drift_prefers_matched_noise_scale() -> None:
     null trajectories look collapsed (variance misattributed to a small
     gap c), which depresses the validation EW-AUC. The joint search must
     pick the matched scale (0.3) over the mis-specified one (0.15)."""
-    from csd_observer.data.bifurcation import build_dataset
+    from csd_observer.datasets.synthetic.common.generators import build_dataset
     from csd_observer.models.spectral_drift import (
         extract_mode,
         grid_search_sigma_u_q_drift,

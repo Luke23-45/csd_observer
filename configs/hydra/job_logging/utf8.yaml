@@ -1,0 +1,22 @@
+# python logging configuration for tasks (UTF-8 file handler; cp1252
+# consoles/locales crash on Lightning's emoji messages otherwise)
+version: 1
+formatters:
+  simple:
+    format: '[%(asctime)s][%(name)s][%(levelname)s] - %(message)s'
+handlers:
+  console:
+    class: logging.StreamHandler
+    formatter: simple
+    stream: ext://sys.stdout
+  file:
+    class: logging.FileHandler
+    formatter: simple
+    encoding: utf-8
+    # absolute file path
+    filename: ${hydra.runtime.output_dir}/${hydra.job.name}.log
+root:
+  level: INFO
+  handlers: [console, file]
+
+disable_existing_loggers: false

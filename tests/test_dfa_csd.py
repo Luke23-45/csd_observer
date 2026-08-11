@@ -6,12 +6,12 @@ import numpy as np
 
 
 def _dfa(features, seq_lengths, window_size=100):
-    from csd_observer.models.dfa_csd.indicator import raw_dfa_indicator
+    from csd_observer.models.indicators.dfa_csd.indicator import raw_dfa_indicator
     return raw_dfa_indicator(features, seq_lengths, window_size)
 
 
 def _manual_dfa_alpha(seg, box_sizes):
-    from csd_observer.utils.metrics import _linear_detrend
+    from csd_observer.models.common.detrend import _linear_detrend
 
     seg = _linear_detrend(seg)
     seg = seg - seg.mean()

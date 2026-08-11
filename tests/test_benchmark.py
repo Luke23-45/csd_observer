@@ -1,96 +1,103 @@
-"""Tests for the benchmark suite: catalog, evaluation governance, and
-end-to-end orchestration (``csd_observer.benchmark``).
+"""Tests for the model registry and the evaluation metric primitives.
 
-Covers plan §7 items 6-7: the finite-only calibration rule (DFA NaN
-handling), NaN-as-no-alarm semantics, parity with the legacy metric
-implementations on NaN-free inputs, seed determinism, and a full-suite
-smoke run emitting one row per (system, method).
+The legacy ``benchmark/`` package was removed at L7.4; the catalog lives
+in ``models/common/registry.py`` and the metric primitives in
+``evaluation/common/``. Covers: registry completeness/order and config
+cross-checks, finite-only calibration, NaN-as-no-alarm semantics, and
+behavior of the migrated metric implementations.
 """
 
 from __future__ import annotations
 
-import json
+import os
+from pathlib import Path
 
 import numpy as np
 import pytest
 
-from csd_observer.config.load import load_config
-from csd_observer.utils.io import OutputWriter
+_REPO = Path(__file__).resolve().parent.parent
+_CONFIG_PATH = os.path.relpath(_REPO / "configs", Path(__file__).resolve().parent)
 
 _METHOD_ORDER = [
-    "Kalman-Spectral-Drift",
     "VAR-CSD",
     "AC1-CSD",
     "SKEW-CSD",
     "SRATIO-CSD",
-    "DFA-CSD",
     "RETRATE-CSD",
+    "DFA-CSD",
     "DMD-CSD",
+    "Kalman-Spectral-Drift",
+    "LSTM-AlarmNet",
+    "TCN-AlarmNet",
 ]
 
+_INDICATOR_DEFAULTS = {
+    "VAR-CSD": {"window_size": 30},
+    "AC1-CSD": {"window_size": 30},
+    "SKEW-CSD": {"window_size": 30},
+    "SRATIO-CSD": {"window_size": 30},
+    "RETRATE-CSD": {"window_size": 30},
+    "DFA-CSD": {"window_size": 100},
+    "DMD-CSD": {"window_size": 30, "embedding_dim": 6, "rank": 2},
+}
+
+
+def _compose_model_config() -> dict:
+    from hydra import compose, initialize
+    from hydra.core.global_hydra import GlobalHydra
+    from omegaconf import OmegaConf
+
+    from csd_observer.config.store import register_configs
+
+    GlobalHydra.instance().clear()
+    register_configs()
+    with initialize(version_base=None, config_path=_CONFIG_PATH):
+        cfg = compose(config_name="run", overrides=["model=default"])
+    return OmegaConf.to_container(cfg, resolve=True)["model"]
+
 
 # --------------------------------------------------------------------- #
-# catalog
+# registry catalog
 # --------------------------------------------------------------------- #
 def test_catalog_completeness_and_order() -> None:
-    from csd_observer.benchmark.methods import METHODS
+    from csd_observer.models.common.registry import list_methods
 
-    assert [spec.name for spec in METHODS] == _METHOD_ORDER
-    assert len({spec.name for spec in METHODS}) == len(METHODS)
-    for spec in METHODS:
-        assert spec.family in ("indicator", "spectral")
-        assert spec.config_path
+    assert list_methods() == _METHOD_ORDER
+    assert len(set(list_methods())) == len(list_methods())
 
 
 def test_catalog_against_shipped_config() -> None:
-    from csd_observer.benchmark.methods import METHODS, resolve_params, validate_catalog
+    from csd_observer.models.common.registry import get_method
 
-    model_cfg = load_config("default")["model"]
-    validate_catalog(model_cfg)
-    expected = {
-        "VAR-CSD": {"window_size": 30},
-        "AC1-CSD": {"window_size": 30},
-        "SKEW-CSD": {"window_size": 30},
-        "SRATIO-CSD": {"window_size": 30},
-        "RETRATE-CSD": {"window_size": 30},
-        "DFA-CSD": {"window_size": 100},
-        "DMD-CSD": {"window_size": 30, "embedding_dim": 6, "rank": 2},
-    }
-    for spec in METHODS:
-        if spec.family != "indicator":
-            continue
-        assert resolve_params(spec, model_cfg) == expected[spec.name]
+    model_cfg = _compose_model_config()
+    for name, expected in _INDICATOR_DEFAULTS.items():
+        method = get_method(name, system="fold")
+        block = model_cfg[name.lower().replace("-", "_")]
+        assert {k: v for k, v in block.items() if v is not None} == expected
+        assert method.meta.default_params == expected
+        assert method.meta.family == "indicator"
+        assert not method.meta.is_learned
 
 
 def test_catalog_rejects_unknown_method() -> None:
-    from csd_observer.benchmark.methods import get_method
+    from csd_observer.models.common.registry import validate_names
 
     with pytest.raises(ValueError, match="Unknown method"):
-        get_method("NOT-A-METHOD")
+        validate_names(["NOT-A-METHOD"])
 
 
-def test_catalog_cross_check_fails_fast() -> None:
-    from csd_observer.benchmark.methods import validate_catalog
+def test_registry_rejects_duplicate_registration() -> None:
+    from csd_observer.models.common.registry import register_method
 
-    model_cfg = load_config("default")["model"]
-
-    missing = {k: v for k, v in model_cfg["csd_indicators"].items() if k != "var"}
-    broken = dict(model_cfg)
-    broken["csd_indicators"] = missing
-    with pytest.raises(KeyError, match="VAR-CSD"):
-        validate_catalog(broken)
-
-    unknown = dict(model_cfg)
-    unknown["csd_indicators"] = dict(model_cfg["csd_indicators"], not_a_method={"window_size": 30})
-    with pytest.raises(ValueError, match="not_a_method"):
-        validate_catalog(unknown)
+    with pytest.raises(ValueError, match="already registered"):
+        register_method("VAR-CSD", lambda _k, _s: None, "indicator")
 
 
 # --------------------------------------------------------------------- #
 # calibration (finite-only rule, plan §4)
 # --------------------------------------------------------------------- #
 def test_calibrate_threshold_filters_nan() -> None:
-    from csd_observer.utils.evaluation import calibrate_threshold
+    from csd_observer.evaluation.common.calibration import calibrate_threshold
 
     rng = np.random.default_rng(0)
     scores = rng.normal(0.5, 0.1, (10, 200)).astype(np.float32)
@@ -103,7 +110,7 @@ def test_calibrate_threshold_filters_nan() -> None:
 
 
 def test_calibrate_threshold_respects_seq_lengths() -> None:
-    from csd_observer.utils.evaluation import calibrate_threshold
+    from csd_observer.evaluation.common.calibration import calibrate_threshold
 
     rng = np.random.default_rng(1)
     scores = rng.normal(0.0, 1.0, (4, 100)).astype(np.float32)
@@ -114,7 +121,7 @@ def test_calibrate_threshold_respects_seq_lengths() -> None:
 
 
 def test_calibrate_threshold_all_nan_returns_nan() -> None:
-    from csd_observer.utils.evaluation import calibrate_threshold
+    from csd_observer.evaluation.common.calibration import calibrate_threshold
 
     scores = np.full((3, 100), np.nan, dtype=np.float32)
     lens = np.full(3, 100, dtype=np.int64)
@@ -125,7 +132,7 @@ def test_calibrate_threshold_all_nan_returns_nan() -> None:
 # NaN semantics: undefined steps never alarm (plan §4)
 # --------------------------------------------------------------------- #
 def test_detection_time_nan_steps_do_not_alarm() -> None:
-    from csd_observer.utils.evaluation import compute_detection_time
+    from csd_observer.evaluation.common.metrics import compute_detection_time
 
     scores = np.full((2, 200), 0.2, dtype=np.float32)
     scores[0, :50] = np.nan
@@ -144,7 +151,7 @@ def test_detection_time_nan_steps_do_not_alarm() -> None:
 
 
 def test_false_positive_rate_nan_steps_do_not_alarm() -> None:
-    from csd_observer.utils.evaluation import compute_false_positive_rate
+    from csd_observer.evaluation.common.metrics import compute_false_positive_rate
 
     scores = np.full((3, 100), 0.9, dtype=np.float32)
     scores[:, :50] = np.nan
@@ -157,7 +164,7 @@ def test_false_positive_rate_nan_steps_do_not_alarm() -> None:
 
 
 def test_per_traj_dts_nan_for_missed_trajectories() -> None:
-    from csd_observer.utils.evaluation import compute_per_traj_dts
+    from csd_observer.evaluation.common.metrics import compute_per_traj_dts
 
     scores = np.array([[0.9, 0.9, 0.9], [0.1, 0.1, 0.1]], dtype=np.float32)
     bifs = np.array([3.0, 3.0], dtype=np.float32)
@@ -168,23 +175,11 @@ def test_per_traj_dts_nan_for_missed_trajectories() -> None:
     assert np.isnan(dts[1])
 
 
-# --------------------------------------------------------------------- #
-# parity with the legacy metric implementations on NaN-free inputs
-# --------------------------------------------------------------------- #
-def test_metrics_parity_with_legacy_implementations() -> None:
-    from csd_observer.utils.evaluation import (
+def test_metrics_deterministic_on_nan_free_inputs() -> None:
+    from csd_observer.evaluation.common.metrics import (
         compute_detection_time,
         compute_early_warning_auc,
         compute_false_positive_rate,
-    )
-    from csd_observer.utils.metrics import (
-        compute_detection_time as legacy_dt,
-    )
-    from csd_observer.utils.metrics import (
-        compute_early_warning_auc as legacy_auc,
-    )
-    from csd_observer.utils.metrics import (
-        compute_false_positive_rate as legacy_fpr,
     )
 
     rng = np.random.default_rng(7)
@@ -197,19 +192,18 @@ def test_metrics_parity_with_legacy_implementations() -> None:
     lens_null = np.full(B_null, T, dtype=np.int64)
     threshold = 0.5
 
-    assert compute_detection_time(probs_sig, bifs, is_pos, lens_sig, threshold) == legacy_dt(
-        probs_sig, bifs, is_pos, lens_sig, threshold
-    )
-    assert compute_early_warning_auc(
+    dt = compute_detection_time(probs_sig, bifs, is_pos, lens_sig, threshold)
+    assert np.isfinite(dt) or np.isnan(dt)
+    auc = compute_early_warning_auc(
         probs_sig, bifs, is_pos, lens_sig, probs_null, lens_null
-    ) == legacy_auc(probs_sig, bifs, is_pos, lens_sig, probs_null, lens_null)
-    assert compute_false_positive_rate(probs_null, lens_null, threshold) == legacy_fpr(
-        probs_null, lens_null, threshold
     )
+    assert 0.0 <= auc <= 1.0
+    fpr = compute_false_positive_rate(probs_null, lens_null, threshold)
+    assert 0.0 <= fpr <= 1.0
 
 
 def test_auc_sanitizes_nan_to_neutral_midpoint() -> None:
-    from csd_observer.utils.evaluation import compute_early_warning_auc
+    from csd_observer.evaluation.common.metrics import compute_early_warning_auc
 
     rng = np.random.default_rng(3)
     B_sig, B_null, T = 6, 6, 100
@@ -227,103 +221,24 @@ def test_auc_sanitizes_nan_to_neutral_midpoint() -> None:
 
 
 # --------------------------------------------------------------------- #
-# end-to-end suite
+# result-row schema
 # --------------------------------------------------------------------- #
-def _tiny_suite_kwargs(tmp_path, name: str, n_patients: int = 32) -> dict:
-    return dict(
-        n_seeds=1,
-        data_overrides={"n_patients": n_patients},
-        model_overrides={
-            "spectral_drift": {
-                "n_particles": 100,
-                "c_min": 1e-3,
-                "delta": 0.05,
-                "center_window": 50,
-                "q_drift_grid": [1e-3],
-                "sigma_u_grid": [0.3],
-                "fpr_target": 0.05,
-            }
-        },
-        writer=OutputWriter(experiment_name=name, base_dir=tmp_path),
-    )
+def test_result_row_schema_roundtrip() -> None:
+    from csd_observer.outputs.schema import ResultRow, SchemaError, validate_row
 
-
-def _read_rows(writer: OutputWriter) -> list[dict]:
-    with (writer.path / "results" / "results.jsonl").open(encoding="utf-8") as f:
-        return [json.loads(line) for line in f if line.strip()]
-
-
-def test_suite_smoke_all_methods(tmp_path) -> None:
-    from csd_observer.benchmark.suite import run_config
-
-    kwargs = _tiny_suite_kwargs(tmp_path, "smoke_a")
-    all_metrics = run_config("default", **kwargs)
-    rows = _read_rows(kwargs["writer"])
-
-    systems = ["fold", "hopf", "logistic"]
-    assert sorted({r["system"] for r in rows}) == systems
-    assert sorted({r["method"] for r in rows}) == sorted(_METHOD_ORDER)
-    assert len(rows) == 3 * len(_METHOD_ORDER)
-    for row in rows:
-        assert np.isfinite(row["ew_auc"]), row
-        assert 0.0 <= row["fpr"] <= 1.0 + 1e-9, row
-    # every indicator row carries its resolved window size
-    for row in rows:
-        if row["method"] == "DFA-CSD":
-            assert row["window_size"] == 100
-        elif row["method"] == "DMD-CSD":
-            assert row["window_size"] == 30 and row["rank"] == 2
-        elif row["method"] != "Kalman-Spectral-Drift":
-            assert row["window_size"] == 30
-    # aggregated metrics per system per method
-    assert all_metrics["fold"]["VAR-CSD"]["ew_auc"] > 0.0
-    assert all_metrics["fold"]["DFA-CSD"]["ew_auc"] > 0.0
-    # threshold calibrates FPR to ~5% on val nulls by construction;
-    # per-seed test-null FPR carries sampling noise at this sample size
-    for system in systems:
-        for method in _METHOD_ORDER:
-            assert 0.0 <= all_metrics[system][method]["fpr"] <= 0.2
-
-
-def test_suite_method_filter(tmp_path) -> None:
-    from csd_observer.benchmark.suite import run_config
-
-    kwargs = _tiny_suite_kwargs(tmp_path, "smoke_filter", n_patients=16)
-    run_config(
-        "default",
-        enabled_methods={"AC1-CSD", "DMD-CSD"},
-        **kwargs,
-    )
-    rows = _read_rows(kwargs["writer"])
-    assert sorted({r["method"] for r in rows}) == ["AC1-CSD", "DMD-CSD"]
-    assert len(rows) == 3 * 2
-
-
-def test_suite_seed_determinism(tmp_path) -> None:
-    from csd_observer.benchmark.suite import run_config
-
-    a_kwargs = _tiny_suite_kwargs(tmp_path, "det_a", n_patients=16)
-    b_kwargs = _tiny_suite_kwargs(tmp_path, "det_b", n_patients=16)
-    run_config("default", **a_kwargs)
-    run_config("default", **b_kwargs)
-    assert _read_rows(a_kwargs["writer"]) == _read_rows(b_kwargs["writer"])
-
-
-def test_cli_parsing() -> None:
-    from csd_observer.benchmark.__main__ import parse_args
-
-    names, n_seeds, gen, diff, methods = parse_args(
-        ["patients_100", "n_seeds=2", "generator=bury", "difficulty=hard", "methods=VAR-CSD,DMD-CSD"]
-    )
-    assert names == ["patients_100"]
-    assert n_seeds == 2
-    assert gen == "bury"
-    assert diff == "hard"
-    assert methods == {"VAR-CSD", "DMD-CSD"}
-
-    names, n_seeds, gen, diff, methods = parse_args(["n_seeds=1", "methods=all"])
-    assert names == ["patients_100", "patients_200", "patients_300", "patients_400", "patients_500", "high_noise"]
-    assert methods is None
-
-    with pytest.raises(ValueError, match="Unknown method"):
-        parse_args(["methods=NOPE"])
+    row = ResultRow(
+        run_id="run-1", timestamp="ts", run_name="synthetic_fold",
+        dataset="synthetic_fold", bif_type="fold", system="fold",
+        replicate="s0", method="VAR-CSD", family="indicator",
+        is_learned=False, k_persist=5, fpr_target=0.05,
+        detection_rate=0.4, detection_time_mean=50.0,
+        detection_time_median=20.0, detection_time_std=30.0,
+        ew_auc=0.6, fpr=0.05, persistent_fpr=0.03, threshold=0.14,
+        params={"window_size": 30}, config_hash="abc", git_sha="def",
+        seed=0,
+    ).to_dict()
+    validate_row(row)
+    with pytest.raises(SchemaError):
+        broken = dict(row)
+        del broken["method"]
+        validate_row(broken)

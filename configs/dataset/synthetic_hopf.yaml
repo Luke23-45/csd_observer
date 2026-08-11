@@ -1,0 +1,8 @@
+name: synthetic_hopf
+source: synthetic
+bif_type: hopf
+generator: classic
+difficulty: standard
+n_trajectories: 500
+max_length: 200
+seed: 42

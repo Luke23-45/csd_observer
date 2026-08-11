@@ -1,0 +1,20 @@
+name: daphnia_ext
+source: dryad
+doi: 10.5061/dryad.q3p64
+licence: CC0-1.0
+bif_type: transcritical
+archive_type: zip
+parser: zip-csv
+expected_files:
+  - path: data-and-code.zip
+    size: 13273254
+    md5: 923e08e6bafae412c43250fef0752ac7
+  - path: README_for_data-and-code.txt
+    size: 4848
+    md5: 11770ce4f5a2b5369dce6f6f846340c5
+download:
+  mode: manual
+  env_token_var: DRYAD_API_TOKEN
+  retries: 3
+  wait_minutes: 10
+  poll_interval_sec: 5

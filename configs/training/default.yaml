@@ -1,3 +1,4 @@
+enabled: true
 epochs: 50
 batch_size: 64
 lr: 0.001
@@ -6,3 +7,9 @@ patience: 5
 spectral_radius_weight: 0.01
 spectral_threshold: 0.95
 scheduler_eta_min: 0.000001
+label_window: 60
+num_workers: 0
+deterministic: true
+accelerator: auto
+devices: auto
+progress_bar: false

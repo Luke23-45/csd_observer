@@ -6,7 +6,7 @@ import numpy as np
 
 
 def _sratio(features, seq_lengths, window_size=30):
-    from csd_observer.models.sratio_csd.indicator import raw_sratio_indicator
+    from csd_observer.models.indicators.sratio_csd.indicator import raw_sratio_indicator
     return raw_sratio_indicator(features, seq_lengths, window_size)
 
 
@@ -101,7 +101,7 @@ def test_sratio_deterministic() -> None:
 
 
 def test_sratio_matches_manual_formula() -> None:
-    from csd_observer.utils.metrics import _linear_detrend
+    from csd_observer.models.common.detrend import _linear_detrend
 
     rng = np.random.default_rng(9)
     B, n = 4, 30

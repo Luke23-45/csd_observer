@@ -5,23 +5,35 @@ spectral_drift:
   center_window: 50
   q_drift_grid: [1.0e-6, 1.0e-5, 1.0e-4, 1.0e-3, 1.0e-2, 1.0e-1]
   sigma_u_grid: [0.15, 0.3, 0.6, 1.0]
-  fpr_target: 0.05
 
-csd_indicators:
-  fpr_target: 0.05
-  ac1:
-    window_size: 30
-  var:
-    window_size: 30
-  skew:
-    window_size: 30
-  sratio:
-    window_size: 30
-  retrate:
-    window_size: 30
-  dfa:
-    window_size: 100
-  dmd:
-    window_size: 30
-    embedding_dim: 6
-    rank: 2
+# Indicator parameter blocks keyed by each method's ``config_path``
+# (§10.1): ``IndicatorMethod`` resolves ``cfg["model"][<key>]`` and the
+# seven per-method files mirror these blocks exactly.
+var_csd:
+  window_size: 30
+ac1_csd:
+  window_size: 30
+skew_csd:
+  window_size: 30
+sratio_csd:
+  window_size: 30
+retrate_csd:
+  window_size: 30
+dfa_csd:
+  window_size: 100
+dmd_csd:
+  window_size: 30
+  embedding_dim: 6
+  rank: 2
+
+lstm:
+  in_channels: 1
+  hidden_size: 64
+  num_layers: 1
+  dropout: 0.1
+
+tcn:
+  in_channels: 1
+  hidden_size: 32
+  kernel_size: 5
+  levels: 3

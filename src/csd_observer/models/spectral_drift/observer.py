@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Dict
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -80,7 +78,7 @@ class SpectralDriftObserver(nn.Module):
     # ------------------------------------------------------------------ #
     # filter core
     # ------------------------------------------------------------------ #
-    def forward(self, y: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(self, y: torch.Tensor) -> dict[str, torch.Tensor]:
         """Run the filter over a batch of sequences.
 
         Args:

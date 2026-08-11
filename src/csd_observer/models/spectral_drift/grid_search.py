@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
-
 import numpy as np
 import torch
 
@@ -19,11 +17,11 @@ def grid_search_q_drift(
     *,
     sigma_u: float,
     r: float,
-    q_grid: Optional[List[float]] = None,
+    q_grid: list[float] | None = None,
     n_particles: int = 500,
     c_min: float = 1e-3,
     delta: float = 0.05,
-    device: Optional[torch.device] = None,
+    device: torch.device | None = None,
 ) -> float:
     """Select ``Q_drift`` by validation early-warning AUC.
 
@@ -71,14 +69,14 @@ def grid_search_sigma_u_q_drift(
     lens_signal_val: np.ndarray,
     lens_null_val: np.ndarray,
     *,
-    sigma_u_grid: Optional[List[float]] = None,
+    sigma_u_grid: list[float] | None = None,
     r: float,
-    q_grid: Optional[List[float]] = None,
+    q_grid: list[float] | None = None,
     n_particles: int = 500,
     c_min: float = 1e-3,
     delta: float = 0.05,
-    device: Optional[torch.device] = None,
-) -> Tuple[float, float]:
+    device: torch.device | None = None,
+) -> tuple[float, float]:
     """Select ``(sigma_u, Q_drift)`` jointly by validation early-warning AUC.
 
     The model's per-step noise scale ``sigma_u`` is a free hyperparameter
@@ -123,7 +121,7 @@ def grid_search_sigma_u_q_drift(
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    from csd_observer.utils.evaluation import compute_early_warning_auc
+    from csd_observer.models.common.auc import compute_early_warning_auc
 
     y_sig_t = torch.from_numpy(
         np.asarray(y_val_signal, dtype=np.float32)

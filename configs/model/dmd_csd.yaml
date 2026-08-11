@@ -1,0 +1,4 @@
+﻿dmd_csd:
+  window_size: 30
+  embedding_dim: 6
+  rank: 2
