@@ -47,7 +47,7 @@ def smoke_config(tmp_path: Path) -> dict:
             config_name="run",
             overrides=[
                 "+dataset_overrides.n_trajectories=16",
-                "+dataset_overrides.max_length=64",
+                "+dataset_overrides.max_length=128",
             ],
         )
     config = OmegaConf.to_container(cfg, resolve=True)
@@ -101,6 +101,7 @@ def test_e2e_smoke(smoke_config: dict, tmp_path: Path) -> None:
     assert row.run_id == f"synthetic_fold-{writer.timestamp}"
     assert row.dataset == "synthetic_fold"
     assert row.methods == ["VAR-CSD"]
+    assert row.is_learned_methods == []
 
     # -- no network: synthetic provenance recorded -----------------------------
     env = json.loads((writer.root / "metadata" / "environment.json").read_text(encoding="utf-8"))

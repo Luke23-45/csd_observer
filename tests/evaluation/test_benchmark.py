@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-_REPO = Path(__file__).resolve().parent.parent
+_REPO = Path(__file__).resolve().parent.parent.parent
 _CONFIG_PATH = os.path.relpath(_REPO / "configs", Path(__file__).resolve().parent)
 
 _METHOD_ORDER = [
@@ -29,6 +29,7 @@ _METHOD_ORDER = [
     "Kalman-Spectral-Drift",
     "LSTM-AlarmNet",
     "TCN-AlarmNet",
+    "PatchTST-AlarmNet",
 ]
 
 _INDICATOR_DEFAULTS = {

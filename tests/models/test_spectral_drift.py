@@ -360,3 +360,26 @@ def test_grid_search_sigma_u_q_drift_prefers_matched_noise_scale() -> None:
     )
     assert best_sigma_u == 0.3
     assert best_q == 1e-3
+
+
+def test_spectral_method_accepts_real_systems() -> None:
+    """G1: the spectral adapter must construct for the real-dataset
+    bif_types (previously ``ValueError: Unknown system``)."""
+    from csd_observer.models.common.systems import SUPPORTED_SYSTEMS
+    from csd_observer.models.spectral_drift.method import SpectralDriftMethod
+
+    for system in ("subcritical_hopf", "transcritical"):
+        m = SpectralDriftMethod("kalman-spectral-drift", system)
+        assert m._system == system
+        assert m.meta.bif_types_supported == list(SUPPORTED_SYSTEMS)
+    with pytest.raises(ValueError, match="Unknown system"):
+        SpectralDriftMethod("kalman-spectral-drift", "nonexistent")
+
+
+def test_obs_noise_defaults_cover_all_systems() -> None:
+    """G2: every supported system has an observation-noise default, so
+    ``fit`` can never KeyError for a plan-verified bif_type."""
+    from csd_observer.models.common.systems import SUPPORTED_SYSTEMS
+    from csd_observer.models.spectral_drift.method import _OBS_NOISE_DEFAULT
+
+    assert set(_OBS_NOISE_DEFAULT) == set(SUPPORTED_SYSTEMS)

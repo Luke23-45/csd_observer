@@ -87,10 +87,21 @@ def test_synthetic_runs_validate(evaluation: str) -> None:
 
 
 @pytest.mark.parametrize("dataset", ["tac", "daphnia_ext"])
-def test_real_datasets_require_processed_data(dataset: str) -> None:
+def test_real_datasets_validate_and_require_processed_data(dataset: str, tmp_path: Path) -> None:
+    """Real dataset names are registry-known, so validation accepts them;
+    missing processed data surfaces at load time (provisioning), not at
+    config validation."""
     config = _compose([f"dataset={dataset}"])
-    with pytest.raises(ValueError, match="unknown dataset"):
-        validate_config(config)
+    validate_config(config)
+    assert config["dataset"]["name"] == dataset
+    assert config["dataset"]["processing"]["min_length"] == 100
+
+    from csd_observer.datasets.common.errors import DatasetError, DatasetErrorCode
+    from csd_observer.datasets.registry import get_dataset
+
+    with pytest.raises(DatasetError) as exc_info:
+        get_dataset(dataset, {"data_root": str(tmp_path)})
+    assert exc_info.value.code == DatasetErrorCode.MANIFEST_CORRUPT
 
 
 def test_model_group_selects_block() -> None:
