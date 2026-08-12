@@ -104,12 +104,19 @@ def compute_persistent_dts(
     leads: list[float] = []
     censored: list[float] = []
     for i in range(len(scores)):
-        if not is_positive[i]:
+        # Non-positive trajectories are skipped: they contribute neither
+        # detection nor censoring to the per-traj statistics. Using
+        # ``bool(is_positive[i])`` instead of truthiness guards against
+        # a stray numpy 0/1 vector.
+        if not bool(is_positive[i]):
             leads.append(float("nan"))
             censored.append(float("nan"))
             continue
         tau = float(bifurcation_times[i])
         if not np.isfinite(threshold) or tau <= 0:
+            # Undefined detection window: report as censored, not as a
+            # negative lead. The downstream ``detection_rate`` denominator
+            # will exclude this trajectory via the censored count.
             leads.append(float("nan"))
             censored.append(float("nan"))
             continue
@@ -132,12 +139,35 @@ def compute_persistent_detection_metrics(
     threshold: float,
     k_persist: int,
 ) -> dict[str, float]:
-    """Detection-rate + DT aggregates with explicit censoring (§8.2)."""
+    """Detection-rate + DT aggregates with explicit censoring (§8.2).
+
+    The detection-rate denominator is the count of *evaluable* positive
+    trajectories — those with ``tau > 0`` and a finite threshold. A
+    positive trajectory whose ``tau <= 0`` is excluded from both
+    numerator and denominator (it has no pre-transition prefix to
+    alarm in). A positive trajectory with a finite threshold and
+    ``tau > 0`` is either detected or censored; both contribute to
+    the denominator.
+    """
     leads, censored = compute_persistent_dts(
         scores, bifurcation_times, is_positive, seq_lengths, threshold, k_persist
     )
-    n_pos = sum(1 for i in range(len(is_positive)) if bool(is_positive[i]))
-    if n_pos == 0:
+    # ``compute_persistent_dts`` may report NaN+NaN for evaluable-positive
+    # trajectories whose tau/threshold is undefined. Re-derive the
+    # evaluable mask directly here so the detection-rate denominator
+    # matches the lead/censor classification.
+    threshold_finite = bool(np.isfinite(threshold))
+    evaluable = np.asarray(
+        [
+            bool(is_positive[i])
+            and threshold_finite
+            and float(bifurcation_times[i]) > 0
+            for i in range(len(is_positive))
+        ],
+        dtype=bool,
+    )
+    n_eval = int(evaluable.sum())
+    if n_eval == 0:
         return {
             "detection_rate": float("nan"),
             "detection_time_mean": float("nan"),
@@ -145,11 +175,18 @@ def compute_persistent_detection_metrics(
             "detection_time_std": float("nan"),
             "n_detected": 0,
             "n_censored": 0,
+            "n_evaluable": 0,
         }
-    detected = [v for v in leads if np.isfinite(v)]
+    detected_mask = evaluable & np.asarray(
+        [np.isfinite(v) for v in leads], dtype=bool
+    )
+    censored_mask = evaluable & np.asarray(
+        [bool(c) for c in censored], dtype=bool
+    )
+    detected = [v for v, ok in zip(leads, detected_mask, strict=False) if ok]
     n_detected = len(detected)
-    n_censored = int(round(sum(1 for v in censored if v == 1.0)))
-    rate = n_detected / n_pos
+    n_censored = int(censored_mask.sum())
+    rate = n_detected / n_eval
     if detected:
         arr = np.array(detected, dtype=float)
         dt_mean = float(arr.mean())
@@ -164,6 +201,7 @@ def compute_persistent_detection_metrics(
         "detection_time_std": dt_std,
         "n_detected": n_detected,
         "n_censored": n_censored,
+        "n_evaluable": n_eval,
     }
 
 
@@ -204,6 +242,42 @@ def compute_persistent_trajectory_fpr(
     stream = persistent_alarm_stream(scores_null, threshold, k_persist, seq_lengths=seq_lengths_null)
     detected = sum(bool(stream[i, : int(length)].any()) for i, length in enumerate(seq_lengths_null))
     return detected / len(seq_lengths_null)
+
+
+def trajectory_fpr_anchor(
+    p: float,
+    k_persist: int,
+    window_steps: int,
+    seq_lengths: np.ndarray | None = None,
+) -> float:
+    """Length-aware anchor upper bound for ``compute_persistent_trajectory_fpr``.
+
+    FKG gives ``P(persistent alarm in W-window) <= 1 - (1 - p^k)^(W - k + 1)``.
+    The trajectory-FPR is ``Pr(at least one persistent alarm in the
+    trajectory prefix)``. Without length conditioning, short trajectories
+    yield a biased (under-)estimate relative to a fixed-window anchor.
+
+    ``window_steps`` is the canonical window for the anchor (plan §8).
+    When ``seq_lengths`` is provided we use the *maximum* of the empirical
+    lengths (clipped to ``window_steps``) as the effective window, so the
+    anchor and the observed FPR are computed over comparable windows.
+
+    Returns a single upper-bound number; consumers compare it to the
+    observed trajectory-FPR.
+    """
+    if not (0.0 <= p <= 1.0):
+        raise ValueError(f"p must be in [0,1], got {p}")
+    if k_persist < 1:
+        raise ValueError(f"k_persist must be >= 1, got {k_persist}")
+    if window_steps < k_persist:
+        return 0.0
+    base = 1.0 - (1.0 - p**k_persist) ** (window_steps - k_persist + 1)
+    if seq_lengths is None or len(seq_lengths) == 0:
+        return base
+    eff_w = max(1, int(min(int(np.max(seq_lengths)), int(window_steps))))
+    if eff_w < k_persist:
+        return 0.0
+    return 1.0 - (1.0 - p**k_persist) ** (eff_w - k_persist + 1)
 
 
 def compute_persistent_ew_auc(
@@ -277,4 +351,5 @@ __all__ = [
     "compute_persistent_trajectory_fpr",
     "compute_persistent_ew_auc",
     "null_anchor_upper_bound",
+    "trajectory_fpr_anchor",
 ]

@@ -35,7 +35,18 @@ def main(cfg: DictConfig) -> None:
 
 
 def _force_utf8_stdio() -> None:
-    """Keep Lightning's unicode console messages from crashing on cp1252 shells."""
+    """Reconfigure ``sys.stdout``/``sys.stderr`` to UTF-8 with replace fallback.
+
+    Hydra's job logging uses ``configs/hydra/job_logging/utf8.yaml``
+    (``override hydra/job_logging: utf8`` in ``run.yaml`` defaults) to
+    open the FileHandler with ``encoding="utf-8"`` — that is the
+    primary defense against Lightning's emoji logs crashing on cp1252
+    consoles. This helper is **belt-and-suspenders**: it also
+    reconfigures the ``StreamHandler``'s underlying stream objects so
+    any direct ``print`` or stdout/stderr write through the hydra
+    console handler also survives. ``errors="replace"`` keeps unicode
+    errors non-fatal in the worst case.
+    """
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")

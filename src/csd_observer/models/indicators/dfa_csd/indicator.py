@@ -130,12 +130,13 @@ def _window_dfa_alpha(seg: np.ndarray, box_sizes: tuple[int, ...]) -> float:
     """DFA-1 scaling exponent of a linearly detrended window.
 
     The linear detrend is applied inside the window first (plan §3
-    global convention; Dakos 2012 detrends before DFA). Returns
-    ``NaN`` when the detrended window has zero variance or any box
-    size yields a non-positive fluctuation ``F(s)``.
+    global convention; Dakos 2012 detrends before DFA). The OLS
+    residual of a first-order polynomial fit has zero mean, so the
+    profile is integrated without an additional centering pass.
+    Returns ``NaN`` when the detrended window has zero variance or
+    any box size yields a non-positive fluctuation ``F(s)``.
     """
     seg = _linear_detrend(seg)
-    seg = seg - seg.mean()
     if float(np.mean(seg * seg)) <= 1e-12:
         return float("nan")
     n = len(seg)

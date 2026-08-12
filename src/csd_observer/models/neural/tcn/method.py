@@ -28,12 +28,13 @@ class TcnAlarmMethod:
 
     def fit(self, train_arrays: dict[str, Any], val_arrays: dict[str, Any], cfg: dict[str, Any]) -> None:
         c = dict(cfg.get("model", {}).get("tcn", {}) or {})
-        in_channels = int(c.get("in_channels", 1))
+        in_channels = int(c.get("in_channels") or 1)
         if "features" in train_arrays:
             shape = np.asarray(train_arrays["features"]).shape
             if len(shape) != 3:
                 raise ValueError(f"features must have shape (B,T,C), got {shape}")
-            if "in_channels" not in c:
+            # ``None`` means "auto": pin the channel count to the data.
+            if not c.get("in_channels"):
                 in_channels = int(shape[-1])
         hidden = int(c.get("hidden_size", 32))
         kernel = int(c.get("kernel_size", 5))

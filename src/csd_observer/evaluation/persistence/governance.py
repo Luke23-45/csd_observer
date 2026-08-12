@@ -27,6 +27,7 @@ from csd_observer.evaluation.persistence.protocol import (
     compute_persistent_fpr,
     compute_persistent_trajectory_fpr,
     null_anchor_upper_bound,
+    trajectory_fpr_anchor,
 )
 from csd_observer.outputs.writer import OutputWriter
 
@@ -136,7 +137,29 @@ def evaluate_method(
 
     # ----------------------------------------------------- protocol checks
     achieved_step_fpr = fpr
-    anchor = null_anchor_upper_bound(fpr_target, k_persist, 50)
+    # Two anchor windows: the canonical 50-step (§8 FKG) and the
+    # length-aware version used by the trajectory-FPR check.
+    anchor_step = null_anchor_upper_bound(fpr_target, k_persist, 50)
+    anchor_traj = trajectory_fpr_anchor(
+        fpr_target, k_persist, 50, seq_lengths=lens_null[idx_n["test"]]
+    )
+    # Step-FPR drift gate: the step-FPR is calibrated against the val
+    # null, so we tolerate 2× target before flagging drift (§10.3).
+    step_drift = bool(
+        math.isfinite(achieved_step_fpr)
+        and achieved_step_fpr > 2.0 * fpr_target
+    )
+    # Persistent-FPR drift gate: the empirical persistent step-FPR
+    # should not exceed the 50-step FKG anchor by more than 2×. A
+    # method whose persistent rate wildly exceeds the i.i.d. anchor
+    # is exhibiting positive dependence (calibration artefact or
+    # signal leakage) and the run is unusable for the protocol
+    # comparison.
+    persistent_drift = bool(
+        math.isfinite(persistent_fpr)
+        and math.isfinite(anchor_step)
+        and persistent_fpr > 2.0 * anchor_step
+    )
     protocol_checks = {
         "k_persist": k_persist,
         "fpr_target": fpr_target,
@@ -145,14 +168,17 @@ def evaluate_method(
         "achieved_persistent_trajectory_fpr": (
             persistent_trajectory_fpr if math.isfinite(persistent_trajectory_fpr) else None
         ),
-        "null_anchor_upper_bound_50step": anchor,
+        "null_anchor_upper_bound_50step": anchor_step,
+        "trajectory_anchor_upper_bound_50step": anchor_traj,
         "anchor_brackets_empirical": (
-            not math.isfinite(persistent_fpr)
-            or not math.isfinite(anchor)
-            or persistent_trajectory_fpr <= anchor + 1e-9
+            not math.isfinite(persistent_trajectory_fpr)
+            or not math.isfinite(anchor_traj)
+            or persistent_trajectory_fpr <= anchor_traj + 1e-9
         ),
+        "drift_step_fpr": step_drift,
+        "drift_persistent_fpr": persistent_drift,
         "drift": (
-            "PROTOCOL_DRIFT" if achieved_step_fpr > 2.0 * fpr_target else "ok"
+            "PROTOCOL_DRIFT" if (step_drift or persistent_drift) else "ok"
         ),
     }
 

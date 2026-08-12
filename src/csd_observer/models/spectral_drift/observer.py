@@ -87,7 +87,7 @@ class SpectralDriftObserver(nn.Module):
         Returns:
             dict with keys
 
-            * ``collapse_prob`` ``(B, T)``: posterior ``Pr(c_k < delta)``;
+            * ``collapse_prob`` ``(B, T)``: posterior ``Pr(c_t < delta | y_{0:t})``;
             * ``c_hat`` ``(B, T)``: posterior mean of the spectral gap;
             * ``c_std`` ``(B, T)``: posterior std of the spectral gap;
             * ``log_lik`` ``(B,)``: predictive log-likelihood (diagnostics).
@@ -194,7 +194,12 @@ class SpectralDriftObserver(nn.Module):
             p_u = p_corr
 
             # 6. record posterior quantities ------------------------------------
-            # collapse_prob[:, t] = Pr(c_{t+1} < delta | y_{0:t})
+            # collapse_prob[:, t] is Pr(c_t < delta | y_{0:t}), i.e. the
+            # posterior probability that the spectral gap at index ``t``
+            # has crossed the collapse threshold given all observations
+            # up to and including ``y_t``. The per-index state ``c`` is
+            # the *updated* (post-Kalman, post-resample) gap, so the
+            # index matches.
             collapse_prob[:, t] = (
                 weights * (c < delta_t).to(torch.float32)
             ).sum(dim=1)

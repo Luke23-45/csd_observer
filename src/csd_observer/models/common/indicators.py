@@ -21,6 +21,7 @@ from typing import Any
 import numpy as np
 
 from csd_observer.models.common.interface import MethodMeta
+from csd_observer.models.common.systems import SUPPORTED_SYSTEMS
 from csd_observer.models.spectral_drift.preprocess import extract_mode
 
 INDICATOR_DEFAULTS: dict[str, dict[str, Any]] = {
@@ -63,8 +64,10 @@ class IndicatorMethod:
 
     Attributes:
         key: registry key (``"var_csd"``, ``"ac1_csd"``, ...).
-        system: one of ``"fold"``, ``"hopf"``, ``"logistic"`` (the
-            dataset's bifurcation type, used for mode extraction).
+        system: the dataset's bifurcation type, used for mode
+            extraction; must be in ``systems.SUPPORTED_SYSTEMS`` (the
+            three synthetic types plus ``subcritical_hopf`` /
+            ``transcritical`` for the real datasets).
     """
 
     def __init__(self, key: str, system: str) -> None:
@@ -72,7 +75,7 @@ class IndicatorMethod:
             raise KeyError(
                 f"Unknown indicator key {key!r}; valid: {sorted(_INDICATOR_NAMES)}"
             )
-        if system not in ("fold", "hopf", "logistic"):
+        if system not in SUPPORTED_SYSTEMS:
             raise ValueError(f"Unknown system: {system!r}")
         self.key = key
         self._system = system
@@ -83,7 +86,9 @@ class IndicatorMethod:
             family="indicator",
             is_learned=False,
             scope_caveat=_SCOPE_CAVEAT,
-            bif_types_supported=["fold"],
+            # Advisory (the runner intentionally runs all systems with the
+            # scope caveat above as the authority; no per-system gating).
+            bif_types_supported=list(SUPPORTED_SYSTEMS),
             default_params=dict(INDICATOR_DEFAULTS[key]),
             config_path=(key,),
         )
@@ -128,8 +133,15 @@ class IndicatorMethod:
 
 
 def _resolve_params(meta: MethodMeta, cfg: dict[str, Any]) -> dict[str, Any]:
-    """Config block values override hard-coded defaults; ``fpr_target``
-    is an evaluation-level setting, never a method parameter."""
+    """Config block values override hard-coded defaults.
+
+    ``fpr_target`` is an evaluation-level setting, never a method
+    parameter. Unknown keys in the config block (typos such as
+    ``windo_size`` instead of ``window_size``) are silently ignored
+    so a stale override does not crash a run; ``meta.default_params``
+    supplies the canonical value. Pass ``warn=True`` (e.g. from the
+    CLI validator) to surface unknown keys instead.
+    """
     params: dict[str, Any] = dict(meta.default_params)
     node: Any = cfg.get("model", {})
     for key in meta.config_path:
@@ -137,9 +149,22 @@ def _resolve_params(meta: MethodMeta, cfg: dict[str, Any]) -> dict[str, Any]:
             return params
         node = node[key]
     if isinstance(node, dict):
+        known = set(meta.default_params) | {"fpr_target"}
         for k, v in node.items():
             if k == "fpr_target" or v is None:
                 continue
+            if k not in known:
+                # Typos silently fall through to defaults; surface the
+                # unknown key for diagnostic clarity. This warning fires
+                # per-call so it should only be enabled in CLI/debug
+                # contexts, never in the per-trajectory hot path.
+                import warnings
+                warnings.warn(
+                    f"Unknown parameter {k!r} for method {meta.name!r}; "
+                    f"valid: {sorted(meta.default_params)}",
+                    UserWarning,
+                    stacklevel=3,
+                )
             params[k] = v
     return params
 

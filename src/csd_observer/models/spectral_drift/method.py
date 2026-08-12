@@ -22,11 +22,23 @@ import numpy as np
 import torch
 
 from csd_observer.models.common.interface import MethodMeta
+from csd_observer.models.common.systems import SUPPORTED_SYSTEMS
 from csd_observer.models.spectral_drift.grid_search import grid_search_sigma_u_q_drift
 from csd_observer.models.spectral_drift.observer import SpectralDriftObserver
 from csd_observer.models.spectral_drift.preprocess import extract_mode, running_mean_center
 
-_OBS_NOISE_DEFAULT = {"fold": 0.10, "hopf": 0.15, "logistic": 0.05}
+# Observation-noise mapping per system (used when the run config does not
+# pin ``data.obs_noise_scale``). The real-data defaults mirror the
+# synthetic generator scales (Hopf radial amplitude / fold-value
+# observation noise); they are refined per dataset during Phase 8 (L8)
+# once the archives are in the sandbox.
+_OBS_NOISE_DEFAULT = {
+    "fold": 0.10,
+    "hopf": 0.15,
+    "logistic": 0.05,
+    "subcritical_hopf": 0.15,
+    "transcritical": 0.10,
+}
 
 _DEFAULT_Q_GRID = [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1]
 _DEFAULT_SIGMA_U_GRID = [0.15, 0.3, 0.6, 1.0]
@@ -38,11 +50,15 @@ class SpectralDriftMethod:
     Args:
         key: registry key (unused by this method; kept for a uniform
             factory signature).
-        system: one of ``"fold"``, ``"hopf"``, ``"logistic"``.
+        system: the dataset's bifurcation type; must be in
+            ``systems.SUPPORTED_SYSTEMS`` (synthetic ``fold``/``hopf``/
+            ``logistic`` plus real ``subcritical_hopf``/``transcritical``).
+            Selects the mode-extraction rule and the observation-noise
+            default.
     """
 
     def __init__(self, key: str, system: str) -> None:
-        if system not in ("fold", "hopf", "logistic"):
+        if system not in SUPPORTED_SYSTEMS:
             raise ValueError(f"Unknown system: {system!r}")
         self.key = key
         self._system = system
@@ -57,9 +73,10 @@ class SpectralDriftMethod:
             is_learned=False,
             scope_caveat=(
                 "theoretically grounded for fold (saddle-node) bifurcations; "
-                "empirical elsewhere (Hopf, logistic)"
+                "empirical elsewhere (Hopf, logistic, transcritical, TAC)"
             ),
-            bif_types_supported=["fold"],
+            # Advisory (all systems are run; the caveat is the authority).
+            bif_types_supported=list(SUPPORTED_SYSTEMS),
             default_params={
                 "n_particles": 500,
                 "c_min": 1e-3,
@@ -91,8 +108,12 @@ class SpectralDriftMethod:
                 subset is taken from ``split_indices``).
             val_arrays: null bundle (validation subset used as the
                 null anchor of the selection criterion).
-            cfg: run config (``model.spectral_drift`` block).
+            cfg: run config (``model.spectral_drift`` block). The
+                orchestration runner stashes the per-seed run seed in
+                ``cfg["__run_seed__"]``; we use it to seed the
+                observer so per-seed reproducibility holds.
         """
+        self._fit_seed = int(cfg.get("__run_seed__", 0) or 0)
         sd = self._spectral_cfg(cfg)
         n_particles = int(sd.get("n_particles", 500))
         c_min = float(sd.get("c_min", 1e-3))
@@ -144,6 +165,7 @@ class SpectralDriftMethod:
         )
         self._fitted = {
             "sigma_u": best_sigma_u,
+            "best_q": best_q,
             "q_drift": best_q,
             "r": r_var,
             "n_particles": n_particles,
@@ -152,6 +174,20 @@ class SpectralDriftMethod:
             "center_window": center_window,
         }
         self._observer = None  # rebuilt lazily on the fitted device
+        self._fit_seed: int | None = None
+
+    def _observer_seed(self) -> int:
+        """Return a stable observer RNG seed derived from the run seed.
+
+        ``torch.seed``/``numpy``/Python are seeded in
+        :func:`trainer_factory.seed_everything` for learned methods; the
+        observer must still produce *different* output across ``n_seeds``
+        so per-seed reproducibility holds. We hash ``run_seed`` into a
+        32-bit integer and store it in :attr:`_fit_seed` during ``fit``;
+        ``score`` falls back to ``0`` if the hash is unavailable (e.g.
+        when the method is used outside a governed run).
+        """
+        return int(self._fit_seed) if self._fit_seed is not None else 0
 
     def score(
         self,
@@ -175,7 +211,7 @@ class SpectralDriftMethod:
                     n_particles=f["n_particles"],
                     c_min=f["c_min"],
                     delta=f["delta"],
-                    seed=0,
+                    seed=self._observer_seed(),
                 )
                 .to(self._device)
                 .eval()

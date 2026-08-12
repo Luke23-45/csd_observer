@@ -1,5 +1,4 @@
-lstm:
-  in_channels: 1
+﻿lstm:
   hidden_size: 64
   num_layers: 1
   dropout: 0.1

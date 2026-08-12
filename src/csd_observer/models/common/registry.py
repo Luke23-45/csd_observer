@@ -58,6 +58,25 @@ def register_method(
 
 
 def ensure_loaded() -> None:
+    """Register every method, including torch-dependent ones.
+
+    ``list_methods`` and ``validate_names`` need the full catalog; this
+    is the entry point for those. Torch-import-free callers should use
+    :func:`ensure_indicator_loaded` instead to avoid pulling in torch.
+    """
+    ensure_indicator_loaded()
+    ensure_torch_loaded()
+
+
+def ensure_indicator_loaded() -> None:
+    """No-op for the seven pure-NumPy indicators; defined for symmetry."""
+    # Indicators register at module import (top of this file). Nothing to
+    # do here, but having the entry point makes the lazy-loading contract
+    # explicit at the call sites (the orchestrator / tests).
+    return
+
+
+def ensure_torch_loaded() -> None:
     """Register torch-dependent methods exactly once (idempotent).
 
     Spectral-drift and the neural baselines self-register on import;
@@ -68,12 +87,14 @@ def ensure_loaded() -> None:
     if _LOADED:
         return
     from csd_observer.models.neural.lstm.method import register_lstm_method  # noqa: E402
+    from csd_observer.models.neural.patchtst.method import register_patchtst_method  # noqa: E402
     from csd_observer.models.neural.tcn.method import register_tcn_method  # noqa: E402
     from csd_observer.models.spectral_drift.method import register_spectral_method  # noqa: E402
 
     register_spectral_method()
     register_lstm_method()
     register_tcn_method()
+    register_patchtst_method()
     _LOADED = True
 
 
@@ -100,13 +121,22 @@ def validate_names(names: Sequence[str]) -> None:
 
 
 def get_method(name: str, system: str = "fold") -> Any:
-    """Build one method instance for ``name`` on ``system``."""
-    ensure_loaded()
+    """Build one method instance for ``name`` on ``system``.
+
+    Indicator methods are built without importing torch. When the name
+    is not among the seven indicators, the torch-bearing modules are
+    lazily imported (once) and the lookup is retried — so
+    ``get_method("Kalman-Spectral-Drift")`` works on the first call of
+    a process, in any test/import order.
+    """
+    ensure_indicator_loaded()
+    if name not in _REGISTERED:
+        ensure_torch_loaded()
     if name not in _REGISTERED:
         raise ValueError(
             f"Unknown method: {name!r}. Valid methods: {', '.join(list_methods())}"
         )
-    _key, factory, _family = _REGISTERED[name]
+    _key, factory, family = _REGISTERED[name]
     return factory(_key, system)
 
 
@@ -138,7 +168,9 @@ for _name, (_factory, _family) in _FACTORIES.items():
 
 __all__ = [
     "build_methods",
+    "ensure_indicator_loaded",
     "ensure_loaded",
+    "ensure_torch_loaded",
     "get_method",
     "list_families",
     "list_methods",

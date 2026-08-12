@@ -14,6 +14,27 @@ import numpy as np
 _DEFAULT_DRIVE_NOISE = {"fold": 0.30, "hopf": 0.05, "logistic": 0.02}
 _DEFAULT_OBS_NOISE = {"fold": 0.10, "hopf": 0.15, "logistic": 0.05}
 
+
+def _trajectory_rngs(seed: int, n: int) -> list[np.random.Generator]:
+    """Derive ``n`` independent NumPy sub-RNGs from a master seed.
+
+    Each trajectory is generated from its own sub-stream so:
+
+    * trajectories are mutually independent (trajectory ``i`` is unaffected
+      by trajectory ``j``);
+    * the per-trajectory consumption is constant (the old "draws are
+      interleaved" hazard where trajectory ``i`` saw a different state
+      depending on whether trajectory ``i-1`` crashed early is gone);
+    * the same ``(seed, n)`` pair always produces the same streams in
+      the same order, so ``a == b`` for two calls with the same seed
+      holds.
+
+    Uses NumPy's :class:`SeedSequence` to spawn independent streams; this
+    is the standard idiom for parallel-safe independent RNGs.
+    """
+    ss = np.random.SeedSequence(seed)
+    return [np.random.default_rng(s) for s in ss.spawn(n)]
+
 # Ramp targets used by the "hard" generator tier.
 _HARD_PARAM_END = {"fold": -1.0, "hopf": 0.5, "logistic": 3.15}
 
@@ -108,16 +129,17 @@ class FoldBifurcationDataset:
         return float(self.max_length * (0.0 - self.r_start) / (self.r_end - self.r_start))
 
     def generate(self) -> dict[str, np.ndarray]:
-        rng = np.random.default_rng(self.seed)
         N = self.n_trajectories
         T = self.max_length
         r = np.linspace(self.r_start, self.r_end, T).astype(np.float32)
+        tau_i = self.bifurcation_time
 
+        sub_rngs = _trajectory_rngs(self.seed, N)
         x = np.zeros((N, T), dtype=np.float32)
         for i in range(N):
-            tau_i = self.bifurcation_time
+            rng_i = sub_rngs[i]
             for _attempt in range(30):
-                x_i = rng.normal(0.0, 0.5)
+                x_i = float(rng_i.normal(0.0, 0.5))
                 crash_t: int | None = None
                 for t in range(T):
                     # Explicit Euler with dt=1 is unstable on the fold for r>1
@@ -125,7 +147,7 @@ class FoldBifurcationDataset:
                     # deterministic drift and inject the noise once per step.
                     for _ in range(10):
                         x_i = np.clip(x_i + (r[t] - x_i ** 2) * 0.1, -5.0, 5.0)
-                    x_i = np.clip(x_i + self.noise_scale * rng.normal(0.0, 1.0), -5.0, 5.0)
+                    x_i = np.clip(x_i + self.noise_scale * float(rng_i.normal(0.0, 1.0)), -5.0, 5.0)
                     x[i, t] = x_i
                     if crash_t is None and x_i < -1.5:
                         crash_t = t
@@ -134,8 +156,14 @@ class FoldBifurcationDataset:
                 if not self.null and float(crash_t) >= tau_i - 10.0:
                     break
 
-        y = x + self.obs_noise_scale * rng.normal(0.0, 1.0, size=(N, T)).astype(np.float32)
-        y = y[..., None]
+        # Observation noise uses a parallel set of sub-streams so the obs
+        # RNG never interleaves with the trajectory noise RNG.
+        obs_rngs = _trajectory_rngs(self.seed ^ 0xA5A5, N)
+        obs_noise = np.stack([
+            self.obs_noise_scale * obs_rngs[i].normal(0.0, 1.0, size=T).astype(np.float32)
+            for i in range(N)
+        ])
+        y = (x + obs_noise)[..., None]
 
         return _build_return_dict(
             y, x[..., None],
@@ -176,27 +204,34 @@ class HopfBifurcationDataset:
         return float(self.max_length * (0.0 - self.mu_start) / (self.mu_end - self.mu_start))
 
     def generate(self) -> dict[str, np.ndarray]:
-        rng = np.random.default_rng(self.seed)
         N = self.n_trajectories
         T = self.max_length
         mu = np.linspace(self.mu_start, self.mu_end, T).astype(np.float32)
 
+        sub_rngs = _trajectory_rngs(self.seed, N)
         r = np.zeros((N, T), dtype=np.float32)
         theta = np.zeros((N, T), dtype=np.float32)
+        omega = 0.1
         for i in range(N):
-            r_i = rng.uniform(0.5, 1.5)
-            theta_i = rng.uniform(0.0, 2 * np.pi)
+            rng_i = sub_rngs[i]
+            r_i = float(rng_i.uniform(0.5, 1.5))
+            theta_i = float(rng_i.uniform(0.0, 2 * np.pi))
             for t in range(T):
-                r_i = r_i + (mu[t] * r_i - r_i ** 3) + self.noise_scale * rng.normal(0.0, 1.0)
+                r_i = r_i + (mu[t] * r_i - r_i ** 3) + self.noise_scale * float(rng_i.normal(0.0, 1.0))
                 r_i = max(r_i, 0.01)
-                theta_i = theta_i + self.omega + self.noise_scale * rng.normal(0.0, 1.0)
+                theta_i = theta_i + omega + self.noise_scale * float(rng_i.normal(0.0, 1.0))
                 r[i, t] = r_i
                 theta[i, t] = theta_i
 
         x1 = r * np.cos(theta)
         x2 = r * np.sin(theta)
         obs = np.stack([x1, x2], axis=-1).astype(np.float32)
-        obs += self.obs_noise_scale * rng.normal(0.0, 1.0, size=obs.shape).astype(np.float32)
+        obs_rngs = _trajectory_rngs(self.seed ^ 0xA5A5, N)
+        obs_noise = np.stack([
+            self.obs_noise_scale * obs_rngs[i].normal(0.0, 1.0, size=(T, 2)).astype(np.float32)
+            for i in range(N)
+        ])
+        obs = (obs + obs_noise).astype(np.float32)
 
         return _build_return_dict(
             obs, np.stack([r, theta], axis=-1),
@@ -236,20 +271,26 @@ class LogisticMapDataset:
         return float(self.max_length * (mu_bif - self.mu_start) / (self.mu_end - self.mu_start))
 
     def generate(self) -> dict[str, np.ndarray]:
-        rng = np.random.default_rng(self.seed)
         N = self.n_trajectories
         T = self.max_length
         mu = np.linspace(self.mu_start, self.mu_end, T).astype(np.float32)
 
+        sub_rngs = _trajectory_rngs(self.seed, N)
         x = np.zeros((N, T), dtype=np.float32)
         for i in range(N):
-            x_i = rng.uniform(0.1, 0.9)
+            rng_i = sub_rngs[i]
+            x_i = float(rng_i.uniform(0.1, 0.9))
             for t in range(T):
-                x_i = mu[t] * x_i * (1.0 - x_i) + self.noise_scale * rng.normal(0.0, 1.0)
+                x_i = mu[t] * x_i * (1.0 - x_i) + self.noise_scale * float(rng_i.normal(0.0, 1.0))
                 x_i = np.clip(x_i, 0.0, 1.0)
                 x[i, t] = x_i
 
-        y = x[..., None] + self.obs_noise_scale * rng.normal(0.0, 1.0, size=(N, T, 1)).astype(np.float32)
+        obs_rngs = _trajectory_rngs(self.seed ^ 0xA5A5, N)
+        obs_noise = np.stack([
+            self.obs_noise_scale * obs_rngs[i].normal(0.0, 1.0, size=(T, 1)).astype(np.float32)
+            for i in range(N)
+        ])
+        y = (x[..., None] + obs_noise).astype(np.float32)
 
         return _build_return_dict(
             y, x[..., None],
@@ -348,27 +389,23 @@ class RandomizedBifurcationDataset:
         return self._generate_standard()
 
     def _generate_standard(self) -> dict[str, np.ndarray]:
-        rng = np.random.default_rng(self.seed)
         N = self.n_trajectories
         T = self.max_length
         system = self.system
         tfrac = np.arange(T, dtype=np.float64) / float(T - 1) if T > 1 else np.zeros(1)
 
-        if self.null:
-            tau = np.full(N, float(T + 1), dtype=np.float32)
-        else:
-            tau = (rng.uniform(*self.tau_frac_range, size=N) * (T - 1)).astype(np.float32)
-        tau_frac = tau / float(T - 1)
-
-        if system == "fold":
-            noise_mult = np.exp(rng.uniform(np.log(0.5), np.log(0.9), size=N))
-            color = rng.uniform(0.0, 0.3, size=N)
-        else:
-            noise_mult = np.exp(rng.uniform(*np.log(self.noise_mult_range), size=N))
-            color = rng.uniform(*self.color_range, size=N)
-        obs_mult = np.exp(rng.uniform(np.log(0.5), np.log(2.0), size=N))
-        degree = rng.integers(2, 11, size=N)
-        pscale = self.perturbation_scale * np.exp(rng.uniform(np.log(0.3), np.log(1.0), size=N))
+        sub_rngs = _trajectory_rngs(self.seed, N)
+        tau = np.empty(N, dtype=np.float32)
+        tau_frac = np.empty(N, dtype=np.float64)
+        for i in range(N):
+            if self.null:
+                tf = float(sub_rngs[i].uniform(*self.tau_frac_range))
+                tau_i_val = float(T + 1)
+            else:
+                tf = float(sub_rngs[i].uniform(*self.tau_frac_range))
+                tau_i_val = tf * (T - 1)
+            tau[i] = tau_i_val
+            tau_frac[i] = tf
 
         n_channels = 2 if system == "hopf" else 1
         features = np.zeros((N, T, n_channels), dtype=np.float32)
@@ -377,10 +414,20 @@ class RandomizedBifurcationDataset:
         omega = 0.1
 
         for i in range(N):
-            if self.null:
-                tf_i = float(rng.uniform(*self.tau_frac_range))
+            rng_i = sub_rngs[i]
+            # Per-trajectory design draws (in this order, matching the
+            # old master-RNG consumption order for trajectory ``i``).
+            if system == "fold":
+                noise_mult_i = float(np.exp(rng_i.uniform(np.log(0.5), np.log(0.9))))
+                color_i = float(rng_i.uniform(0.0, 0.3))
             else:
-                tf_i = float(tau_frac[i])
+                noise_mult_i = float(np.exp(rng_i.uniform(*np.log(self.noise_mult_range))))
+                color_i = float(rng_i.uniform(*self.color_range))
+            obs_mult_i = float(np.exp(rng_i.uniform(np.log(0.5), np.log(2.0))))
+            degree_i = int(rng_i.integers(2, 11))
+            pscale_i = float(self.perturbation_scale * np.exp(rng_i.uniform(np.log(0.3), np.log(1.0))))
+
+            tf_i = float(tau_frac[i])
             if system == "fold":
                 start = tf_i / (1.0 - tf_i)
                 ramp = (start + (-1.0 - start) * tfrac).astype(np.float32) if not self.null else np.full(T, start, dtype=np.float32)
@@ -392,17 +439,17 @@ class RandomizedBifurcationDataset:
                 start = (3.0 - mu_end * tf_i) / (1.0 - tf_i)
                 ramp = (start + (mu_end - start) * tfrac).astype(np.float32) if not self.null else np.full(T, start, dtype=np.float32)
 
-            d = int(degree[i])
-            coeffs = rng.normal(0.0, 1.0, size=d)
-            s = float(pscale[i])
+            d = degree_i
+            coeffs = rng_i.normal(0.0, 1.0, size=d)
+            s = pscale_i
             k_min = 1
             scaled_c = coeffs * (s ** np.arange(k_min, k_min + d))
 
-            sig = self.noise_scale * float(noise_mult[i])
-            phi = float(color[i])
-            e = _ar1_noise(rng, T, phi, sig)
-            wn = rng.normal(0.0, 1.0, size=T)
-            obs = self.obs_noise_scale * float(obs_mult[i])
+            sig = self.noise_scale * noise_mult_i
+            phi = color_i
+            e = _ar1_noise(rng_i, T, phi, sig)
+            wn = rng_i.normal(0.0, 1.0, size=T)
+            obs = self.obs_noise_scale * obs_mult_i
 
             if system == "fold":
                 # Reject trajectories whose noise-driven crash precedes the
@@ -410,11 +457,11 @@ class RandomizedBifurcationDataset:
                 # mislabelled early bifurcation, not a saddle-node transition.
                 tau_i = float(T + 1) if self.null else float(tau[i])
                 for _attempt in range(30):
-                    coeffs = rng.normal(0.0, 1.0, size=d)
+                    coeffs = rng_i.normal(0.0, 1.0, size=d)
                     scaled_c = coeffs * (s ** np.arange(k_min, k_min + d))
-                    e = _ar1_noise(rng, T, phi, sig)
-                    wn = rng.normal(0.0, 1.0, size=T)
-                    x = float(np.sqrt(max(start, 1e-3)) * max(0.0, 1.0 + 0.2 * float(rng.normal(0.0, 1.0))))
+                    e = _ar1_noise(rng_i, T, phi, sig)
+                    wn = rng_i.normal(0.0, 1.0, size=T)
+                    x = float(np.sqrt(max(start, 1e-3)) * max(0.0, 1.0 + 0.2 * float(rng_i.normal(0.0, 1.0))))
                     crash_t: int | None = None
                     for t in range(T):
                         # Substep the deterministic drift: explicit Euler with
@@ -434,18 +481,18 @@ class RandomizedBifurcationDataset:
                     if not self.null and float(crash_t) >= tau_i - 10.0:
                         break
             elif system == "hopf":
-                r = float(rng.uniform(0.5, 1.5))
-                th = float(rng.uniform(0.0, 2.0 * np.pi))
+                r = float(rng_i.uniform(0.5, 1.5))
+                th = float(rng_i.uniform(0.0, 2.0 * np.pi))
                 for t in range(T):
                     drift = ramp[t] * r - r ** 3 + self._polynomial(r, scaled_c, k_min)
                     r = float(np.clip(r + drift + e[t], 0.01, 3.0))
                     th = th + omega + sig * float(wn[t])
                     true_states[i, t, 0] = r
                     true_states[i, t, 1] = th
-                    features[i, t, 0] = r * np.cos(th) + obs * rng.normal(0.0, 1.0)
-                    features[i, t, 1] = r * np.sin(th) + obs * rng.normal(0.0, 1.0)
+                    features[i, t, 0] = r * np.cos(th) + obs * float(rng_i.normal(0.0, 1.0))
+                    features[i, t, 1] = r * np.sin(th) + obs * float(rng_i.normal(0.0, 1.0))
             else:
-                x = float(rng.uniform(0.1, 0.9))
+                x = float(rng_i.uniform(0.1, 0.9))
                 for t in range(T):
                     x = float(np.clip(ramp[t] * x * (1.0 - x) + self._polynomial(x, scaled_c, k_min) + e[t], 0.0, 1.0))
                     true_states[i, t, 0] = x
@@ -521,17 +568,12 @@ class RandomizedBifurcationDataset:
     def _generate_hard(self) -> dict[str, np.ndarray]:
         """Hard tier: co-moving nulls (never cross), rate-concentrated
         crossings, and a wider noise/SNR range per trajectory."""
-        rng = np.random.default_rng(self.seed)
         N = self.n_trajectories
         T = self.max_length
         system = self.system
         tfrac = np.arange(T, dtype=np.float64) / float(T - 1) if T > 1 else np.zeros(1)
 
-        drive_mult = np.exp(rng.uniform(*np.log(_HARD_DRIVE_MULT[system]), size=N))
-        color = rng.uniform(*_HARD_COLOR_RANGE[system], size=N)
-        obs_mult = np.exp(rng.uniform(np.log(0.2), np.log(2.5), size=N))
-        degree = rng.integers(2, 11, size=N)
-        pscale = self.perturbation_scale * np.exp(rng.uniform(np.log(0.3), np.log(1.0), size=N))
+        sub_rngs = _trajectory_rngs(self.seed, N)
 
         n_channels = 2 if system == "hopf" else 1
         features = np.zeros((N, T, n_channels), dtype=np.float32)
@@ -544,35 +586,44 @@ class RandomizedBifurcationDataset:
         rate_frac = 0.5
 
         for i in range(N):
-            d = int(degree[i])
-            coeffs = rng.normal(0.0, 1.0, size=d)
-            s = float(pscale[i])
+            rng_i = sub_rngs[i]
+            # Per-trajectory design draws (in the order the old master RNG
+            # would have consumed them for trajectory ``i``).
+            drive_mult_i = float(np.exp(rng_i.uniform(*np.log(_HARD_DRIVE_MULT[system]))))
+            color_i = float(rng_i.uniform(*_HARD_COLOR_RANGE[system]))
+            obs_mult_i = float(np.exp(rng_i.uniform(np.log(0.2), np.log(2.5))))
+            degree_i = int(rng_i.integers(2, 11))
+            pscale_i = float(self.perturbation_scale * np.exp(rng_i.uniform(np.log(0.3), np.log(1.0))))
+
+            d = degree_i
+            coeffs = rng_i.normal(0.0, 1.0, size=d)
+            s = pscale_i
             scaled_c = coeffs * (s ** np.arange(1, d + 1))
 
-            sig = self.noise_scale * float(drive_mult[i])
-            phi = float(color[i])
-            e = _ar1_noise(rng, T, phi, sig)
-            wn = rng.normal(0.0, 1.0, size=T)
-            obs = self.obs_noise_scale * float(obs_mult[i])
+            sig = self.noise_scale * drive_mult_i
+            phi = color_i
+            e = _ar1_noise(rng_i, T, phi, sig)
+            wn = rng_i.normal(0.0, 1.0, size=T)
+            obs = self.obs_noise_scale * obs_mult_i
 
             if self.null:
-                kind = "co" if float(rng.uniform(0.0, 1.0)) < co_null_frac else "stat"
-                ramp, _ = self._hard_ramp(system, kind, tfrac, rng)
+                kind = "co" if float(rng_i.uniform(0.0, 1.0)) < co_null_frac else "stat"
+                ramp, _ = self._hard_ramp(system, kind, tfrac, rng_i)
                 tau[i] = float(T + 1)
             else:
-                kind = "rate" if float(rng.uniform(0.0, 1.0)) < rate_frac else "bif"
-                ramp, tau_i = self._hard_ramp(system, kind, tfrac, rng)
+                kind = "rate" if float(rng_i.uniform(0.0, 1.0)) < rate_frac else "bif"
+                ramp, tau_i = self._hard_ramp(system, kind, tfrac, rng_i)
                 tau[i] = float(tau_i)
 
             if system == "fold":
                 # Reject noise-driven crashes that precede the labelled
                 # crossing (see _generate_standard for the rationale).
                 for _attempt in range(30):
-                    coeffs = rng.normal(0.0, 1.0, size=d)
+                    coeffs = rng_i.normal(0.0, 1.0, size=d)
                     scaled_c = coeffs * (s ** np.arange(1, d + 1))
-                    e = _ar1_noise(rng, T, phi, sig)
-                    wn = rng.normal(0.0, 1.0, size=T)
-                    x = float(np.sqrt(max(float(ramp[0]), 1e-3)) * max(0.0, 1.0 + 0.2 * float(rng.normal(0.0, 1.0))))
+                    e = _ar1_noise(rng_i, T, phi, sig)
+                    wn = rng_i.normal(0.0, 1.0, size=T)
+                    x = float(np.sqrt(max(float(ramp[0]), 1e-3)) * max(0.0, 1.0 + 0.2 * float(rng_i.normal(0.0, 1.0))))
                     crash_t: int | None = None
                     for t in range(T):
                         for _ in range(10):
@@ -590,18 +641,18 @@ class RandomizedBifurcationDataset:
                     if not self.null and float(crash_t) >= float(tau[i]) - 10.0:
                         break
             elif system == "hopf":
-                r = float(rng.uniform(0.5, 1.5))
-                th = float(rng.uniform(0.0, 2.0 * np.pi))
+                r = float(rng_i.uniform(0.5, 1.5))
+                th = float(rng_i.uniform(0.0, 2.0 * np.pi))
                 for t in range(T):
                     drift = ramp[t] * r - r ** 3 + self._polynomial(r, scaled_c, 1)
                     r = float(np.clip(r + drift + e[t], 0.01, 3.0))
                     th = th + omega + sig * float(wn[t])
                     true_states[i, t, 0] = r
                     true_states[i, t, 1] = th
-                    features[i, t, 0] = r * np.cos(th) + obs * rng.normal(0.0, 1.0)
-                    features[i, t, 1] = r * np.sin(th) + obs * rng.normal(0.0, 1.0)
+                    features[i, t, 0] = r * np.cos(th) + obs * float(rng_i.normal(0.0, 1.0))
+                    features[i, t, 1] = r * np.sin(th) + obs * float(rng_i.normal(0.0, 1.0))
             else:
-                x = float(rng.uniform(0.1, 0.9))
+                x = float(rng_i.uniform(0.1, 0.9))
                 for t in range(T):
                     x = float(np.clip(ramp[t] * x * (1.0 - x) + self._polynomial(x, scaled_c, 1) + e[t], 0.0, 1.0))
                     true_states[i, t, 0] = x

@@ -26,11 +26,11 @@ csd-observer
 python -m csd_observer
 
 # Small fast runs (tiny synthetic dataset, indicators only)
-csd-observer "dataset.n_trajectories=16" "dataset.max_length=64" "training=none"
-csd-observer "dataset.n_trajectories=16" "dataset.max_length=64" "models=[VAR-CSD,AC1-CSD,DMD-CSD]" "training=none"
+csd-observer "dataset.n_trajectories=16" "dataset.max_length=128" "training=none"
+csd-observer "dataset.n_trajectories=16" "dataset.max_length=128" "models=[VAR-CSD,AC1-CSD,DMD-CSD]" "training=none"
 
 # Spectral-drift observer
-csd-observer "dataset.n_trajectories=16" "dataset.max_length=64" "model=spectral_drift" "models=[Kalman-Spectral-Drift]" "training=none"
+csd-observer "dataset.n_trajectories=16" "dataset.max_length=128" "model=spectral_drift" "models=[Kalman-Spectral-Drift]" "training=none"
 
 # Learned neural baseline (needs training)
 csd-observer "models=[LSTM-AlarmNet]"

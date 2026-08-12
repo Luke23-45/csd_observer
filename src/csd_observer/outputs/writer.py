@@ -28,7 +28,6 @@ from __future__ import annotations
 import csv
 import json
 import os
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -194,12 +193,30 @@ class OutputWriter:
         return path
 
     def write_metrics(self, metrics: dict[str, Any]) -> Path:
+        """Replace the entire ``metrics.json`` aggregate (one-shot write).
+
+        The metrics file is a single dict that aggregates results
+        across all (method, seed) pairs in a run. It is overwritten on
+        every call — there is no row identity here, unlike
+        :meth:`write_protocol_checks` which is keyed by
+        ``(method, system, seed)``. The orchestrator writes once per
+        run, after the seed loop completes.
+        """
         path = self.paths.metrics / "metrics.json"
         with open(path, "w", encoding="utf-8") as f:
             json.dump(metrics, f, indent=2, default=_json_default)
         return path
 
     def write_protocol_checks(self, checks: dict[str, Any]) -> Path:
+        """Append/replace a single protocol-check row.
+
+        Identity is ``(method, system, seed)``: a new row with the same
+        identity replaces the prior entry. Rows with different
+        identities are kept. The file (``protocol_checks.json``) is a
+        list, sorted in insertion order on disk; consumers should treat
+        it as a self-attestation snapshot of the run, not as a strict
+        audit log.
+        """
         path = self.paths.metrics / "protocol_checks.json"
         previous: list[dict[str, Any]] = []
         if path.exists():
@@ -222,32 +239,25 @@ class OutputWriter:
         return path
 
     def write_result_row(self, row: dict[str, Any]) -> Path:
-        """Atomic append of a single schema-validated result row."""
+        """Atomic append of a single schema-validated result row.
+
+        Uses ``O_APPEND`` semantics (POSIX: atomic per ``write(2)`` call;
+        NTFS: atomic since Vista) combined with an explicit ``fsync`` and
+        a per-process :class:`FileLock`. There is no read-modify-write:
+        a crash mid-write truncates only the current line, never the
+        previous rows.
+        """
         try:
             validate_row(row)
         except SchemaError:
             raise
         path = self.paths.results / "results.jsonl"
-        # Atomic append: write to tmp, fsync, rename. Under concurrent writers
-        # within the same process this still serializes via the rename; across
-        # processes, rely on the rename being atomic on POSIX and ~atomic on NTFS.
         payload = json.dumps(row, default=_json_default) + "\n"
         with self._results_lock:
-            fd, tmp = tempfile.mkstemp(
-                dir=str(self.paths.results), prefix=".results_", suffix=".tmp"
-            )
-            try:
-                with os.fdopen(fd, "a", encoding="utf-8") as f:
-                    f.write(payload)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(tmp, path) if not path.exists() else _append_then_cleanup(tmp, path)
-            finally:
-                if os.path.exists(tmp):
-                    try:
-                        os.remove(tmp)
-                    except OSError:
-                        pass
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(payload)
+                f.flush()
+                os.fsync(f.fileno())
         return path
 
     def write_trajectory_npz(
@@ -329,7 +339,13 @@ class OutputWriter:
 
 
 class RunLog:
-    """Append-only structured logger that writes to logs/run.log."""
+    """Append-only structured logger that writes to logs/run.log.
+
+    Each ``write`` opens the file in ``"a"`` mode (POSIX/NTFS atomic
+    append under the per-process lock held by the writer's lifecycle),
+    fsyncs, and closes. A crash mid-write truncates only the current
+    JSON line; previous entries survive.
+    """
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -338,6 +354,8 @@ class RunLog:
         rec = {"event": event, **fields, "_ts": datetime.now(timezone.utc).isoformat()}
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, default=_json_default) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
 
 
 def _json_default(obj: Any) -> Any:
@@ -362,31 +380,6 @@ def _slugify(s: str) -> str:
         .replace("/", "_")
         .replace(".", "_")
     )
-
-
-def _append_then_cleanup(tmp: str, path: Path) -> None:
-    """Serial append: read existing, write tmp with appended line, rename."""
-    existing = path.read_text(encoding="utf-8") if path.exists() else ""
-    payload = tmp_payload(tmp)
-    new = existing + payload
-    fd, tmp2 = tempfile.mkstemp(dir=str(path.parent), prefix=".results_", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(new)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp2, path)
-    finally:
-        for p in (tmp, tmp2):
-            if os.path.exists(p):
-                try:
-                    os.remove(p)
-                except OSError:
-                    pass
-
-
-def tmp_payload(tmp: str) -> str:
-    return Path(tmp).read_text(encoding="utf-8") if os.path.exists(tmp) else ""
 
 
 __all__ = ["OutputWriter", "RunPaths", "RunLog"]

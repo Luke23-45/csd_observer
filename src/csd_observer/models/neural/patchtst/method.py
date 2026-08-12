@@ -1,4 +1,11 @@
-"""Method-interface adapter for the recurrent alarm baseline."""
+"""Method-interface adapter for the PatchTST alarm baseline.
+
+Same contract as the LSTM/TCN adapters: training is delegated to the
+training/orchestration layer, ``fit`` loads the supplied checkpoint.
+``in_channels`` is deliberately absent from ``default_params``: the
+schema default ``None`` means "auto" (the runner pins the real channel
+count from the dataset bundle), so a hard-coded 1 would be stale.
+"""
 
 from __future__ import annotations
 
@@ -8,27 +15,25 @@ import numpy as np
 import torch
 
 from csd_observer.models.common.interface import MethodMeta
-from csd_observer.models.neural.lstm.model import LstmAlarmNet
+from csd_observer.models.neural.patchtst.model import PatchTstAlarmNet
 
 
-class LstmAlarmMethod:
-    """Causal LSTM scorer with deterministic, explicit inference semantics.
-
-    Training is deliberately delegated to the training/orchestration layer;
-    a supplied ``checkpoint`` is loaded during ``fit`` when present.  This
-    prevents the model package from importing the training package.
-    """
+class PatchTstAlarmMethod:
+    """Causal patch-transformer scorer with deterministic inference."""
 
     def __init__(self, key: str, system: str) -> None:
         self.system = system
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._cfg: dict[str, Any] = {}
-        self._net: LstmAlarmNet | None = None
+        self._net: PatchTstAlarmNet | None = None
         self._meta = MethodMeta(
-            name="LSTM-AlarmNet", family="neural", is_learned=True,
+            name="PatchTST-AlarmNet", family="neural", is_learned=True,
             scope_caveat="empirical baseline; evaluated under the same alarm governance",
-            default_params={"in_channels": 1, "hidden_size": 64, "num_layers": 1, "dropout": 0.1},
-            config_path=("lstm",),
+            default_params={
+                "patch_len": 16, "stride": 16, "d_model": 64, "n_heads": 2,
+                "n_layers": 2, "mlp_ratio": 4.0, "dropout": 0.1,
+            },
+            config_path=("patchtst",),
         )
 
     @property
@@ -36,7 +41,7 @@ class LstmAlarmMethod:
         return self._meta
 
     def fit(self, train_arrays: dict[str, Any], val_arrays: dict[str, Any], cfg: dict[str, Any]) -> None:
-        self._cfg = dict(cfg.get("model", {}).get("lstm", {}) or {})
+        self._cfg = dict(cfg.get("model", {}).get("patchtst", {}) or {})
         inferred = 1
         if "features" in train_arrays:
             shape = np.asarray(train_arrays["features"]).shape
@@ -46,7 +51,16 @@ class LstmAlarmMethod:
         # ``None`` means "auto": pin the channel count to the data.
         if not self._cfg.get("in_channels"):
             self._cfg["in_channels"] = inferred
-        self._net = LstmAlarmNet(**{k: self._cfg[k] for k in ("in_channels", "hidden_size", "num_layers", "dropout") if k in self._cfg})
+        self._net = PatchTstAlarmNet(
+            in_channels=int(self._cfg["in_channels"]),
+            patch_len=int(self._cfg.get("patch_len", 16)),
+            stride=self._cfg.get("stride"),
+            d_model=int(self._cfg.get("d_model", 64)),
+            n_heads=int(self._cfg.get("n_heads", 2)),
+            n_layers=int(self._cfg.get("n_layers", 2)),
+            mlp_ratio=float(self._cfg.get("mlp_ratio", 4.0)),
+            dropout=float(self._cfg.get("dropout", 0.1)),
+        )
         self._net.to(self._device).eval()
         checkpoint = self._cfg.get("checkpoint")
         if checkpoint:
@@ -70,9 +84,9 @@ class LstmAlarmMethod:
             return torch.sigmoid(self._net(x)).cpu().numpy().astype(np.float32)
 
 
-def register_lstm_method() -> None:
+def register_patchtst_method() -> None:
     from csd_observer.models.common.registry import register_method
-    register_method("LSTM-AlarmNet", LstmAlarmMethod, "neural")
+    register_method("PatchTST-AlarmNet", PatchTstAlarmMethod, "neural")
 
 
-__all__ = ["LstmAlarmMethod", "register_lstm_method"]
+__all__ = ["PatchTstAlarmMethod", "register_patchtst_method"]

@@ -65,8 +65,8 @@
 - [x] **L3.14** `datasets/daphnia_ext/validate.py` — gates; annotation consistent with Nature 467:456 (~110 days pre-extinction).
 - [x] **L3.15** `datasets/synthetic/` — `data/bifurcation.py` → `synthetic/common/`; per-system wrappers; same manifest pipeline (provenance=generator/difficulty/params).
 - [x] **L3.16** `datasets/registry.py` — uniform bundle §5.6; delete `data/`; patch imports. *(Done at L7.4: `data/` removed; callers import `datasets.synthetic.common.generators`.)*
-- [ ] **L3.17** `tests/test_ingest_*.py` — mocked-Dryad fixtures (digests): success, checksum mismatch, auth fail, rate-limit retry, manual timeout, manifest-skip, lock.
-- [ ] **L3.18** Sandbox real-data dry-run: TAC archive → READY_PROCESSED + manifest (download once, cached).
+- [x] **L3.17** `tests/test_ingest_*.py` — mocked-Dryad fixtures (digests): success, checksum mismatch, auth fail, rate-limit retry, manual timeout, manifest-skip, lock. *(L3.15/L3.16 era, done at G3: `tests/datasets/test_ingest.py` + processor suites `tests/datasets/{test_tac_processor,test_daphnia_processor}.py`, shared fixtures `tests/datasets/_fixtures.py`; 279 tests green, ruff clean.)*
+- [ ] **L3.18** Sandbox real-data dry-run: TAC archive → READY_PROCESSED + manifest (download once, cached). *(Wiring proven via CLI probes — `dataset=tac`/`dataset=daphnia_ext` reach the manual-ingest checkpoint with pinned MD5s; blocked on the real archives / DRYAD_API_TOKEN.)*
 
 **DoD:** TAC + DaphniaExt processed + manifests in sandbox; synthetic identical contract; every gate code tested; no network in CI.
 
@@ -79,7 +79,7 @@
 - [x] **L4.3** Relocate 7 indicators (§6.2); zero behavior change; **parity gate**: existing per-indicator tests pass at new paths.
 - [x] **L4.4** Wrap spectral-drift to interface; no-op `fit`; `scope_caveat` set; README (chunking + precision policy, verified in Phase 8).
 - [x] **L4.5** `docs/Implementation_plan/neural_baselines.md` — pin 2–3 families (§6.4: recurrent alarm net, TCN, patch-transformer) with fact-checked citations, objectives, capacity budget, fairness rationale. No fabricated numbers.
-- [x] **L4.6** Implement `models/neural/<b1|b2|b3>/{model.py, lit_module.py, config.yaml}` under the fairness contract. *(LSTM + TCN implemented; `config.yaml` in `configs/model/{lstm,tcn}.yaml`.)*
+- [x] **L4.6** Implement `models/neural/<b1|b2|b3>/{model.py, lit_module.py, config.yaml}` under the fairness contract. *(LSTM + TCN + PatchTST implemented; `config.yaml` in `configs/model/{lstm,tcn,patchtst}.yaml`; PatchTST at G4: causal patch transformer, sinusoidal positions, piecewise emission from completed patches, multi-channel smoke green.)*
 - [ ] **L4.7** `tests/test_indicators_parity.py` + `tests/test_neural_*.py` — 1-epoch smoke (8 trajectories), score shapes, finite scores.
 
 **DoD:** parity green; each neural baseline smoke-runs; citations fact-checked.

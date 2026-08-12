@@ -1,6 +1,0 @@
-# Central configuration for the CSD observer benchmark visualization
-
-paths:
-  project_root: null
-  data_root: null
-  output_root: "analysis/visualize/outputs"

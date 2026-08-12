@@ -28,11 +28,14 @@ def get_dataset(name: str, overrides: dict[str, Any] | None = None) -> dict[str,
 
 
 def list_datasets() -> list[str]:
-    """Every registry-resolvable dataset name (synthetic fast paths +
-    processed real datasets under ``final_data/``)."""
+    """Every registry-resolvable dataset name (synthetic fast paths,
+    the two real datasets with a processor, and any additional processed
+    datasets already materialized under ``final_data/``)."""
     from pathlib import Path
 
-    names = sorted(_SYNTHETIC)
+    from csd_observer.datasets.provision import REAL_DATASETS
+
+    names = sorted(_SYNTHETIC) + sorted(REAL_DATASETS)
     root = Path("final_data")
     if root.is_dir():
         names.extend(sorted(p.name for p in root.iterdir() if (p / "processed" / "manifest.json").is_file()))

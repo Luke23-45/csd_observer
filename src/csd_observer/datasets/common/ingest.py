@@ -1,4 +1,22 @@
-"""Checksum-first raw-file ingestion shared by TAC and DaphniaExt."""
+"""Checksum-first raw-file ingestion shared by TAC and DaphniaExt.
+
+Manual mode is offline and succeeds only when every configured file is
+already present with its pinned digest. Auto mode requires a token and
+still verifies every downloaded file before extraction.
+
+The ``ingest_raw`` driver is safe under repeated invocation:
+
+* a valid existing processed manifest short-circuits to READY_PROCESSED
+  *inside* the per-process :class:`FileLock` so concurrent processes do
+  not race the cache check;
+* on checksum mismatch in auto or manual mode the bad file is moved to
+  ``<name>.bad-<unix-ts>`` so subsequent runs don't re-trigger the
+  identical failure;
+* archive extraction rejects path traversal (incl. absolute entries and
+  ``..`` segments) on both POSIX and Windows drives, strips setuid/setgid
+  bits, and uses ``zipfile.extractall(..., filter="data")`` on the
+  Python interpreters that accept the parameter (3.12 ≤ x < 3.14).
+"""
 from __future__ import annotations
 
 import os
@@ -14,6 +32,29 @@ from .dryad import DryadClient
 from .errors import DatasetError, DatasetErrorCode
 from .states import IngestState, cached_manifest
 
+# Manual-mode log emitter; set by ``set_run_log`` so manual-drop instructions
+# land in the run's structured log rather than in stdout. Falls back to a
+# no-op so the dataset pipeline is usable outside a benchmark run.
+_log_emitter: Any = None
+
+
+def set_run_log(emitter: Any | None) -> None:
+    """Install a logger used for manual-ingest progress events.
+
+    ``emitter`` exposes ``write(event: str, **fields) -> None``. Pass
+    ``None`` to disable.
+    """
+    global _log_emitter
+    _log_emitter = emitter
+
+
+def _emit(event: str, **fields: Any) -> None:
+    if _log_emitter is not None:
+        try:
+            _log_emitter.write(event, **fields)
+        except Exception:
+            pass
+
 
 def expected_files(config: dict[str, Any]) -> list[dict[str, Any]]:
     files = config.get("expected_files")
@@ -23,20 +64,17 @@ def expected_files(config: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def ingest_raw(config: dict[str, Any], root: str | Path, *, token: str | None = None) -> IngestState:
-    """Resolve a dataset into ``root/raw``; never accepts an unchecked file.
-
-    Manual mode is offline and succeeds only when every configured file is
-    already present with its pinned digest.  Auto mode requires a token and
-    still verifies every downloaded file before extraction.
-    """
+    """Resolve a dataset into ``root/raw``; never accepts an unchecked file."""
     root = Path(root)
     raw = root / "raw"
     processed = root / "processed"
     raw.mkdir(parents=True, exist_ok=True)
-    if cached_manifest(processed) is not None:
-        return IngestState.READY_PROCESSED
     lock = FileLock(str(root / ".ingest.lock"))
     with lock:
+        # Second cache check inside the lock: a concurrent process may have
+        # populated the manifest while we were waiting.
+        if cached_manifest(processed) is not None:
+            return IngestState.READY_PROCESSED
         files = expected_files(config)
         mode = str(config.get("download", {}).get("mode", "manual"))
         if mode not in {"manual", "auto"}:
@@ -56,7 +94,11 @@ def ingest_raw(config: dict[str, Any], root: str | Path, *, token: str | None = 
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 if not destination.exists() or _digest(destination) != str(spec["md5"]).lower():
                     client.download(remote[name], str(destination))
-                verify_md5(destination, str(spec["md5"]))
+                try:
+                    verify_md5(destination, str(spec["md5"]))
+                except DatasetError:
+                    _quarantine(destination)
+                    raise
         else:
             _manual_drop(config, files, raw)
         return IngestState.READY_RAW
@@ -65,13 +107,19 @@ def ingest_raw(config: dict[str, Any], root: str | Path, *, token: str | None = 
 def _manual_drop(config: dict[str, Any], files: list[dict[str, Any]], raw: Path) -> None:
     """§5.3 manual mode: poll up to ``download.wait_minutes`` for files.
 
-    Prints the pinned file names + MD5s once at poll start so an operator
-    knows exactly what to drop into ``raw/``. READY_RAW only on match;
-    a timeout raises ``INGEST_CHECKSUM`` listing the still-missing files.
+    Logs the pinned file names + MD5s once at poll start (both via the
+    run log and stdout). READY_RAW only on match; a timeout raises
+    ``INGEST_CHECKSUM`` listing the still-missing files. Bad files are
+    quarantined instead of silently re-validated.
     """
     expected = {str(spec["path"]): str(spec["md5"]) for spec in files}
     missing = [name for name in expected if not (raw / name).exists()]
     if missing:
+        instructions = {
+            "directory": str(raw),
+            "expected": [{"path": name, "md5": md5} for name, md5 in expected.items()],
+        }
+        _emit("manual_drop_required", **instructions)
         print(f"[ingest] manual mode: drop the following files into {raw}:")
         for name, md5 in expected.items():
             print(f"  {name}  (md5 {md5})")
@@ -88,23 +136,45 @@ def _manual_drop(config: dict[str, Any], files: list[dict[str, Any]], raw: Path)
             f"manual files not found (pinned md5s above): {', '.join(missing)}",
         )
     for name, md5 in expected.items():
-        verify_md5(raw / name, md5)
+        try:
+            verify_md5(raw / name, md5)
+        except DatasetError:
+            _quarantine(raw / name)
+            raise
+
+
+def _quarantine(path: Path) -> None:
+    """Move a corrupted or mismatched file aside so the next run starts clean."""
+    if not path.exists():
+        return
+    target = path.with_name(f"{path.name}.bad-{int(time.time())}")
+    try:
+        path.replace(target)
+    except OSError:
+        try:
+            path.unlink()
+        except OSError:
+            pass
 
 
 def extract_archive(archive: str | Path, destination: str | Path) -> list[Path]:
     """Extract safely, rejecting absolute paths and path traversal."""
-    archive, destination = Path(archive), Path(destination).resolve()
+    archive = Path(archive)
+    destination = Path(destination).resolve()
     if not zipfile.is_zipfile(archive):
         raise DatasetError(DatasetErrorCode.INGEST_ARCHIVE, f"not a ZIP archive: {archive}")
     extracted: list[Path] = []
     try:
         with zipfile.ZipFile(archive) as zf:
-            for member in zf.infolist():
-                target = (destination / member.filename).resolve()
-                if target != destination and destination not in target.parents:
-                    raise DatasetError(DatasetErrorCode.INGEST_ARCHIVE, f"unsafe archive member: {member.filename}")
-            zf.extractall(destination)
-            extracted = [destination / m.filename for m in zf.infolist() if not m.is_dir()]
+            members = zf.infolist()
+            for member in members:
+                if _is_unsafe_member(destination, member):
+                    raise DatasetError(
+                        DatasetErrorCode.INGEST_ARCHIVE,
+                        f"unsafe archive member: {member.filename}",
+                    )
+            _safe_extract(zf, members, destination)
+            extracted = [destination / m.filename for m in members if not m.is_dir()]
     except DatasetError:
         raise
     except (OSError, zipfile.BadZipFile) as exc:
@@ -112,9 +182,64 @@ def extract_archive(archive: str | Path, destination: str | Path) -> list[Path]:
     return extracted
 
 
+def _is_unsafe_member(destination: Path, member: zipfile.ZipInfo) -> bool:
+    """Reject absolute entries, drive-letter entries, and ``..`` traversal."""
+    name = member.filename
+    if name.startswith("/") or name.startswith("\\"):
+        return True
+    # Windows-style absolute paths inside the zip: ``C:\foo`` or ``C:/foo``.
+    if len(name) >= 3 and name[1] == ":" and name[2] in ("/", "\\"):
+        return True
+    target = (destination / name).resolve()
+    if destination == target:
+        return False
+    try:
+        target.relative_to(destination)
+    except ValueError:
+        return True
+    return False
+
+
+def _safe_extract(
+    zf: zipfile.ZipFile,
+    members: list[zipfile.ZipInfo],
+    destination: Path,
+) -> None:
+    """Extract with setuid stripping and (on 3.12-3.13) the ``data`` filter.
+
+    Strips setuid/setgid/sticky bits from extracted entries so an
+    untrusted archive cannot elevate privileges. ``filter="data"`` was
+    added to ``ZipFile.extractall`` in Python 3.12 (PEP 706) and removed
+    in 3.14 — the parameter is only accepted between those releases.
+    We probe the signature at runtime so the call is correct on every
+    supported interpreter.
+    """
+    import inspect
+
+    sig = inspect.signature(zf.extractall)
+    accepts_filter = "filter" in sig.parameters
+    if accepts_filter:
+        zf.extractall(destination, members=members, filter="data")
+    else:
+        zf.extractall(destination, members=members)
+    for member in members:
+        target = destination / member.filename
+        if not target.exists() or member.is_dir():
+            continue
+        try:
+            mode = target.stat().st_mode
+        except OSError:
+            continue
+        # Strip setuid, setgid, and sticky bits. On POSIX an untrusted
+        # archive can carry ``0o4755``/``0o2755``/``0o1755`` to attempt
+        # privilege elevation; clearing the high three bits leaves the
+        # normal rwx triad intact.
+        target.chmod(mode & ~0o7000)
+
+
 def _digest(path: Path) -> str:
     from .checksum import md5_file
     return md5_file(path).lower()
 
 
-__all__ = ["expected_files", "extract_archive", "ingest_raw"]
+__all__ = ["expected_files", "extract_archive", "ingest_raw", "set_run_log"]

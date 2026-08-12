@@ -18,3 +18,19 @@ download:
   retries: 3
   wait_minutes: 10
   poll_interval_sec: 5
+processing:
+  min_length: 100
+  normalization: none
+  replicate_column: replicate
+  time_column: day
+  count_column: count
+  positive_column: treatment
+  tau_annotation_days: 110
+  window_days: null
+  data_file: null
+  treatments: {}
+split:
+  replicate_based: true
+  seed: 42
+  train_frac: 0.6
+  val_frac: 0.2

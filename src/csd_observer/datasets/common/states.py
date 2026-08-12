@@ -1,6 +1,7 @@
 """Explicit ingestion lifecycle and idempotent processed-cache checks."""
 from __future__ import annotations
 
+import json
 from enum import Enum
 from pathlib import Path
 
@@ -22,15 +23,21 @@ class IngestState(str, Enum):
 
 
 def cached_manifest(processed_dir: str | Path) -> dict | None:
+    """Return the cached manifest iff it parses and has a ``gates.passed`` list.
+
+    Only ``OSError`` (missing/unreadable file) and ``(json.JSONDecodeError,
+    ValueError)`` are treated as "no cache"; other errors propagate so a
+    silently-corrupted manifest cannot trigger a destructive re-ingest.
+    """
     path = Path(processed_dir) / "manifest.json"
     if not path.exists():
         return None
     try:
         manifest = read_manifest(path)
-    except Exception:
+    except (OSError, json.JSONDecodeError, ValueError):
         return None
     gates = manifest.get("gates", {})
-    return manifest if "passed" in gates else None
+    return manifest if isinstance(gates.get("passed"), list) else None
 
 
 __all__ = ["IngestState", "cached_manifest"]

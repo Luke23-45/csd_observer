@@ -116,13 +116,14 @@ def raw_var_indicator(
 def _window_variance(seg: np.ndarray) -> float:
     """Population variance of the linearly detrended window.
 
-    The linear detrend is applied inside the window first (plan §3:
-    within-window linear detrending, causal because the window is
-    causal). The OLS residual has zero mean, so centring again is
-    numerically exact to the plan's formula.
+    The OLS residual of a first-order polynomial detrend has zero mean
+    by construction, so the plan's formula
+    ``mean((x - mean(x))^2)`` reduces to ``mean(x^2)`` after
+    detrending. We compute the squared-mean directly without the
+    redundant centering pass — numerically identical on finite inputs
+    and one subtraction cheaper per window step.
     """
     seg = _linear_detrend(seg)
-    seg = seg - seg.mean()
     return float(np.mean(seg * seg))
 
 

@@ -19,13 +19,18 @@ only. On Hopf and period-doubling (logistic) systems the observer is applied
 empirically; results there should carry that scope caveat.
 
 The observer has no trainable parameters (buffers only).
+
+.. note::
+
+   ``SpectralDriftObserver`` and the grid-search helpers are imported
+   lazily so that ``from csd_observer.models.spectral_drift import
+   extract_mode, running_mean_center`` does not pull in :mod:`torch`.
+   This keeps the seven NumPy indicators' import chain torch-free
+   (see :mod:`csd_observer.models.common.registry`).
 """
 
-from csd_observer.models.spectral_drift.grid_search import (
-    grid_search_q_drift,
-    grid_search_sigma_u_q_drift,
-)
-from csd_observer.models.spectral_drift.observer import SpectralDriftObserver
+from __future__ import annotations
+
 from csd_observer.models.spectral_drift.preprocess import (
     extract_mode,
     running_mean_center,
@@ -38,3 +43,21 @@ __all__ = [
     "grid_search_sigma_u_q_drift",
     "running_mean_center",
 ]
+
+
+def __getattr__(name: str):
+    """Lazy import of torch-bearing helpers so the package import is torch-free."""
+    if name == "SpectralDriftObserver":
+        from csd_observer.models.spectral_drift.observer import SpectralDriftObserver
+        return SpectralDriftObserver
+    if name == "grid_search_q_drift":
+        from csd_observer.models.spectral_drift.grid_search import (
+            grid_search_q_drift as _grid_search_q_drift,
+        )
+        return _grid_search_q_drift
+    if name == "grid_search_sigma_u_q_drift":
+        from csd_observer.models.spectral_drift.grid_search import (
+            grid_search_sigma_u_q_drift as _grid_search_sigma_u_q_drift,
+        )
+        return _grid_search_sigma_u_q_drift
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

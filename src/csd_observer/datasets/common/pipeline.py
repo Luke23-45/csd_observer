@@ -37,26 +37,58 @@ MIN_LENGTH = 100
 
 _BUNDLE_KEYS = ("features", "seq_lengths", "bifurcation_times", "is_positive")
 
+# Default arrays file name; pinned so consumers can locate the bundle
+# without scanning the manifest for an ``arrays_file`` field.
+ARRAYS_FILE = "arrays.npz"
+
 
 def _matches_processing(manifest: dict[str, Any], config: dict[str, Any]) -> bool:
-    """§13 staleness guard: a changed pipeline invalidates the cache."""
+    """§13 staleness guard: a changed pipeline invalidates the cache.
+
+    The manifest's ``processing.params`` are compared against the current
+    config (with ``min_length`` defaulted). Normalization policy is also
+    considered (it lives at ``manifest.normalization``, not under
+    ``processing``, but a change in policy still invalidates the cache
+    because it changes the on-disk array bytes).
+    """
     recorded = (manifest.get("processing", {}) or {}).get("params", {})
     current = dict(config.get("processing", {}) or {})
     current.setdefault("min_length", MIN_LENGTH)
-    return recorded == current
+    if recorded != current:
+        return False
+    recorded_norm = (manifest.get("normalization", {}) or {}).get("policy")
+    current_norm = str((config.get("processing", {}) or {}).get("normalization", "none"))
+    return recorded_norm == current_norm
 
 
 def _git_sha() -> str:
+    """Return the current HEAD SHA, or ``""`` when not in a git repo.
+
+    Consistent with :func:`csd_observer.outputs.metadata._git_sha` so
+    the dataset manifest's ``git_sha`` and the run environment's
+    ``git_sha`` agree. Empty string is the unambiguous sentinel for
+    "no git available"; downstream consumers can treat it as such.
+    """
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
         ).decode().strip()
     except Exception:
-        return "unknown"
+        return ""
 
 
 def content_hash(arrays_path: Path, params: dict[str, Any]) -> str:
-    """§5.5 ``content_hash``: sha256 over array bytes + canonical params."""
+    """§5.5 ``content_hash``: sha256 over array bytes + canonical params.
+
+    Trust model: the hash binds the on-disk array bytes and the
+    ``processing.params`` + split counts + normalization parameters. It
+    does *not* cover ``gates.passed`` or ``split.indices`` — those are
+    derived from the bundle and the params, so tampering with them while
+    preserving the bundle implies recomputing or guessing the params.
+    An adversary who edits ``gates.passed`` in the manifest keeps a
+    "valid" hash; this is acceptable because ``gates.passed`` is a
+    derived self-attestation, not a security boundary.
+    """
     import hashlib
 
     h = hashlib.sha256()
@@ -114,7 +146,7 @@ def run_pipeline(
     normalization = _fit_normalization(bundle, indices["train"], config)
 
     processed.mkdir(parents=True, exist_ok=True)
-    arrays_path = processed / "arrays.npz"
+    arrays_path = processed / ARRAYS_FILE
     _write_arrays_atomic(arrays_path, bundle)
 
     manifest = _build_manifest(config, bundle, indices, counts, normalization, arrays_path)
@@ -218,6 +250,10 @@ def _build_manifest(
                     "seed", "null_seed", "noise_scale", "obs_noise_scale", "null"):
             if key in config:
                 processing_params.setdefault(key, config[key])
+    # Effective (derived) processing provenance from the processor — e.g.
+    # auto-selected channels, README annotations. Recorded separately so
+    # ``_matches_processing`` compares only the user-controlled keys.
+    effective_processing = (bundle.get("meta") or {}).get("processing", {}) or {}
     manifest: dict[str, Any] = {
         "schema_version": "1.0",
         "dataset": {
@@ -230,10 +266,12 @@ def _build_manifest(
             "source": config.get("source", "unknown"),
             "n_trajectories": int(len(bundle["features"])),
         },
+        "arrays_file": ARRAYS_FILE,
         "processing": {
             "git_sha": _git_sha(),
             "params": processing_params,
             "package_version": _package_version(),
+            "effective": effective_processing,
         },
         "gates": {
             "passed": [

@@ -15,3 +15,21 @@ download:
   retries: 3
   wait_minutes: 10
   poll_interval_sec: 5
+processing:
+  min_length: 100
+  normalization: none
+  envelope: raw
+  sample_rate_hz: null
+  band_low_hz: null
+  band_high_hz: null
+  analysis_window: null
+  channel_group: null
+  channel_name: null
+  section_pattern_stationary: Stationary
+  section_pattern_ramp: Ramp
+  ramp_onset_index: 0
+split:
+  replicate_based: true
+  seed: 42
+  train_frac: 0.6
+  val_frac: 0.2

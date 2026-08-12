@@ -1,5 +1,4 @@
-tcn:
-  in_channels: 1
+﻿tcn:
   hidden_size: 32
   kernel_size: 5
   levels: 3

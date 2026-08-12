@@ -7,13 +7,21 @@ real data, and off-schedule seeds all raise here.
 
 Method names are resolved through the model registry (the single source
 of truth per §6.1); dataset names through the dataset registry.
+
+Minimum dataset-dimension gates (``n_trajectories >= 3``,
+``max_length >= 100``) are bypassed by setting the environment variable
+``CSD_OBSERVER_SKIP_MIN_LENGTH_GATES=1``; this is intended for CI/smoke
+runs only and is documented in AGENTS.md. Production runs should leave
+the gates enabled.
 """
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from csd_observer.models.common.registry import list_families, validate_names
+from csd_observer.models.common.systems import SUPPORTED_SYSTEMS
 
 # §10.2: dataset overrides are whitelisted keys only (registry kwargs
 # that change generation or provenance; ``data_root`` switches where
@@ -66,6 +74,14 @@ def validate_config(config: dict[str, Any]) -> None:
     if dataset_name not in _SYNTHETIC and not split.get("replicate_based", False):
         raise ValueError("real datasets require split.replicate_based=true")
 
+    # ---- §5.6: dataset bif_type must be in the method-side system set ----
+    bif_type = dataset.get("bif_type") if isinstance(dataset, dict) else None
+    if bif_type is not None and str(bif_type) not in SUPPORTED_SYSTEMS:
+        raise ValueError(
+            f"dataset {dataset_name!r} declares unsupported bif_type "
+            f"{bif_type!r}; supported: {', '.join(SUPPORTED_SYSTEMS)}"
+        )
+
     # ---- §10.3: every model in registry ----
     methods = _resolve_methods(config)
     if not methods:
@@ -115,14 +131,38 @@ def validate_config(config: dict[str, Any]) -> None:
     n_seeds = int(config.get("n_seeds", 1))
     if seed_offset < 0 or n_seeds < 1:
         raise ValueError("seed_offset must be >= 0 and n_seeds >= 1")
+    # ``seed_schedule`` checks int32 overflow per (s, split) itself.
     for s in range(n_seeds):
-        base = seed_offset + s * 1000
-        for split_name, delta in (("signal", 101), ("null", 202)):
-            run_seed = base + delta
-            if run_seed < 0:
-                raise ValueError(
-                    f"seed schedule produces negative run seed for seed s={s} ({split_name})"
-                )
+        seed_schedule(seed_offset, s)
+
+    # ---- §5.4 minimum dataset dimensions ----
+    # replicate_split requires n >= 3, DFA requires max_length >= 100.
+    # The MIN_LENGTH gate is bypassed by setting
+    # ``CSD_OBSERVER_SKIP_MIN_LENGTH_GATES=1`` so CI/smoke runs can use
+    # tiny synthetic data; the warning makes the bypass explicit.
+    skip_min_gates = os.environ.get("CSD_OBSERVER_SKIP_MIN_LENGTH_GATES", "").lower() in {"1", "true", "yes"}
+    overrides = config.get("dataset_overrides", {}) or {}
+    n_traj = overrides.get("n_trajectories", config.get("n_trajectories"))
+    if n_traj is not None and not skip_min_gates:
+        try:
+            n_traj_i = int(n_traj)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"n_trajectories must be an integer, got {n_traj!r}") from exc
+        if n_traj_i < 3:
+            raise ValueError(
+                f"n_trajectories must be >= 3 (replicate_split requires at least train+val+test), "
+                f"got {n_traj_i}"
+            )
+    max_len = overrides.get("max_length", config.get("max_length"))
+    if max_len is not None and not skip_min_gates:
+        try:
+            max_len_i = int(max_len)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"max_length must be an integer, got {max_len!r}") from exc
+        if max_len_i < 100:
+            raise ValueError(
+                f"max_length must be >= 100 (DFA gate §5.4 MIN_LENGTH), got {max_len_i}"
+            )
 
 
 def seed_schedule(
@@ -132,9 +172,26 @@ def seed_schedule(
     """§13 per-seed schedule: ``seed_offset + s*1000 + 101/202``.
 
     ``s`` is the 0-based seed index within a run's ``n_seeds`` loop.
+    Raises :class:`ValueError` if the resulting run seed overflows
+    signed int32 (numpy's default integer dtype is 32-bit on Windows;
+    a 64-bit int silently down-casts and breaks per-seed reproducibility).
     """
     base = int(seed_offset) + int(s) * 1000
-    return {"signal": base + 101, "null": base + 202}
+    out: dict[str, int] = {}
+    _max_run_seed = 2**31 - 1
+    for split_name, delta in (("signal", 101), ("null", 202)):
+        run_seed = base + delta
+        if run_seed < 0:
+            raise ValueError(
+                f"seed schedule produces negative run seed for seed s={s} ({split_name})"
+            )
+        if run_seed > _max_run_seed:
+            raise ValueError(
+                f"seed schedule overflows int32 for seed s={s} ({split_name}): "
+                f"run_seed={run_seed} > {_max_run_seed}; reduce seed_offset or n_seeds"
+            )
+        out[split_name] = run_seed
+    return out
 
 
 __all__ = [

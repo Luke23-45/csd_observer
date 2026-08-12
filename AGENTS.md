@@ -23,15 +23,20 @@ From the repo root, small synthetic runs that touch the full pipeline
 
 ```powershell
 $env:PYTHONPATH = "src"
-python -m csd_observer.cli.main "dataset.n_trajectories=16" "dataset.max_length=64" "training=none"
-python -m csd_observer.cli.main "dataset.n_trajectories=16" "dataset.max_length=64" "model=spectral_drift" "models=[Kalman-Spectral-Drift]" "training=none"
-python -m csd_observer.cli.main "dataset.n_trajectories=16" "dataset.max_length=64" "model=lstm" "models=[LSTM-AlarmNet]" "training.epochs=2" "training.patience=2"
+python -m csd_observer.cli.main "dataset.n_trajectories=16" "dataset.max_length=128" "training=none"
+python -m csd_observer.cli.main "dataset.n_trajectories=16" "dataset.max_length=128" "model=spectral_drift" "models=[Kalman-Spectral-Drift]" "training=none"
+python -m csd_observer.cli.main "dataset.n_trajectories=16" "dataset.max_length=128" "model=lstm" "models=[LSTM-AlarmNet]" "training.epochs=2" "training.patience=2"
 ```
+
+For ultra-fast smoke runs (skip the `n_trajectories>=3` / `max_length>=100`
+gates), set ``$env:CSD_OBSERVER_SKIP_MIN_LENGTH_GATES = "1"`` before
+launching. CI / regression tests use this; production runs should leave
+the gates enabled.
 
 Installed console script (same entry point):
 
 ```powershell
-csd-observer "dataset.n_trajectories=8" "dataset.max_length=48" "models=[DMD-CSD]" "training=none"
+csd-observer "dataset.n_trajectories=16" "dataset.max_length=128" "models=[DMD-CSD]" "training=none"
 ```
 
 Overrides use Hydra syntax: `+dataset_overrides.n_trajectories=24` (the
