@@ -10,9 +10,9 @@ defaults:
 # §10.2: run-level knobs. `models` is the multi-select sweep list
 # (display names or registry keys); per-seed schedule §13:
 # run_seed = seed_offset + s * 1000 + 101/202 (signal/null).
+# `seed` was removed (R3.2): the schedule is the single seed source.
 models:
   - VAR-CSD
-seed: 42
 seed_offset: 0
 n_seeds: 1
 dataset_overrides: {}

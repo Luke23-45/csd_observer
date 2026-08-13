@@ -1,0 +1,4 @@
+# §8 output group (default). Values pinned to the store.py node (see
+# tests/config/test_yaml_alignment.py).
+store_trajectories: false
+base_dir: outputs

@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from csd_observer.models.common.interface import MethodMeta
+from csd_observer.models.neural.base.scoring import score_batched
 from csd_observer.models.neural.tcn.model import TcnAlarmNet
 
 
@@ -59,14 +60,22 @@ class TcnAlarmMethod:
         if self._net is None:
             self.fit({}, {}, cfg)
         assert self._net is not None
-        x = torch.as_tensor(np.asarray(features, dtype=np.float32), device=self._device)
-        with torch.no_grad():
-            return torch.sigmoid(self._net(x)).cpu().numpy().astype(np.float32)
+        block = dict(cfg.get("model", {}).get("tcn", {}) or {})
+        batch_size = int(block.get("score_batch_size", 64))
+        return score_batched(
+            self._net,
+            np.asarray(features, dtype=np.float32),
+            np.asarray(seq_lengths, dtype=np.int64),
+            batch_size=batch_size,
+            device=self._device,
+        )
 
 
 def register_tcn_method() -> None:
     from csd_observer.models.common.registry import register_method
-    register_method("TCN-AlarmNet", TcnAlarmMethod, "neural")
+    from csd_observer.models.neural.tcn.lit_module import TcnAlarmLitModule
+
+    register_method("TCN-AlarmNet", TcnAlarmMethod, "neural", lit_module=TcnAlarmLitModule)
 
 
 __all__ = ["TcnAlarmMethod", "register_tcn_method"]

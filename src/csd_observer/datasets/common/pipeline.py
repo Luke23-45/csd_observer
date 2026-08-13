@@ -134,7 +134,7 @@ def run_pipeline(
         raise DatasetError(DatasetErrorCode.INGEST_MANIFEST_MISMATCH, f"unexpected ingest state: {state}")
 
     bundle = processor(root / "raw", config)
-    _run_gates(bundle, extra_validator)
+    _run_gates(bundle, extra_validator, min_length=int((config.get("processing", {}) or {}).get("min_length", MIN_LENGTH)))
 
     split_cfg = config.get("split", {}) or {}
     seed = int(split_cfg.get("seed", 42))
@@ -157,8 +157,14 @@ def run_pipeline(
 def _run_gates(
     bundle: dict[str, Any],
     extra_validator: Callable[[dict[str, Any]], None] | None,
+    min_length: int = MIN_LENGTH,
 ) -> None:
-    """§5.4 mandatory gates; dataset-specific gates run via the hook."""
+    """§5.4 mandatory gates; dataset-specific gates run via the hook.
+
+    ``min_length`` (R0.4) defaults to the DFA gate but can be lowered by
+    the dataset's ``processing.min_length`` for real datasets whose
+    trajectory lengths legitimately fall below 100 steps (the DFA method
+    is in that case simply not included in the run)."""
     features = np.asarray(bundle.get("features"))
     seq_lengths = np.asarray(bundle.get("seq_lengths"), dtype=np.int64)
     is_positive = np.asarray(bundle.get("is_positive"), dtype=bool)
@@ -169,11 +175,11 @@ def _run_gates(
     if not np.isfinite(features).all():
         raise DatasetError(DatasetErrorCode.PROCESS_NONFINITE, "features contain non-finite values")
 
-    short = np.flatnonzero(seq_lengths < MIN_LENGTH)
+    short = np.flatnonzero(seq_lengths < min_length)
     if short.size:
         raise DatasetError(
             DatasetErrorCode.PROCESS_SHORT_LENGTH,
-            f"{short.size} trajectory/ies shorter than {MIN_LENGTH} steps: policy is exclude-with-counts, not silent drop",
+            f"{short.size} trajectory/ies shorter than {min_length} steps: policy is exclude-with-counts, not silent drop",
         )
 
     n_signal = int(is_positive.sum())

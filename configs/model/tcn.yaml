@@ -1,4 +1,5 @@
-﻿tcn:
+tcn:
   hidden_size: 32
   kernel_size: 5
   levels: 3
+  score_batch_size: 64

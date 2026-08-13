@@ -157,38 +157,19 @@ def predict_loader(
 ) -> np.ndarray:
     """Full-array alarm probabilities ``(B, T)`` float32 (no labels).
 
+    Deprecated since R2.5: use
+    ``csd_observer.models.neural.base.scoring.score_batched`` — the
+    canonical batched scorer (this loader builds label buffers the
+    scoring path does not need).
+
     Padded cells beyond ``seq_lengths`` are forced to ``NaN`` in the
     output so downstream evaluation never treats them as alarms.
     """
-    model = model.to(device).eval()
-    feats = np.asarray(features, dtype=np.float32)
-    lens = np.asarray(seq_lengths, dtype=np.int64)
-    B, T = feats.shape[0], feats.shape[1]
-    out = np.full((B, T), np.nan, dtype=np.float32)
-    ds = BundleDataset(
-        [
-            {
-                "features": feats,
-                "seq_lengths": lens,
-                "bifurcation_times": np.zeros(B, dtype=np.float64),
-                "is_positive": np.zeros(B, dtype=bool),
-            }
-        ],
-        label_window=60,
+    from csd_observer.models.neural.base.scoring import score_batched
+
+    return score_batched(
+        model, features, seq_lengths, batch_size=batch_size, device=device
     )
-    loader = DataLoader(
-        ds, batch_size=int(batch_size), shuffle=False, collate_fn=collate_bundles
-    )
-    row = 0
-    with torch.no_grad():
-        for feats_b, lens_b, _targets in loader:
-            b = feats_b.shape[0]
-            probs = torch.sigmoid(model(feats_b.to(device))).cpu().numpy()
-            for i in range(b):
-                n = int(lens_b[i])
-                out[row + i, :n] = probs[i, :n]
-            row += b
-    return out
 
 
 __all__ = [

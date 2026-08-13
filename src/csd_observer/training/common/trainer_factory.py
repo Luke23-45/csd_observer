@@ -1,6 +1,7 @@
 """Deterministic Lightning trainer construction."""
 from __future__ import annotations
 
+import os
 import random
 from typing import Any
 
@@ -14,7 +15,20 @@ from csd_observer.outputs.writer import OutputWriter
 from csd_observer.training.common.callbacks import FingerprintCallback, LedgerCallback
 
 
+def _determinism_env_override() -> bool:
+    return os.environ.get("CSD_OBSERVER_ALLOW_NONDETERMINISM", "").lower() in {"1", "true", "yes"}
+
+
 def seed_everything(seed: int, *, deterministic: bool = True) -> None:
+    """Seed every RNG and pin deterministic algorithms (R2.6).
+
+    ``torch.use_deterministic_algorithms(True, warn_only=False)`` is
+    the strict contract: a non-deterministic kernel is a hard error, not
+    a warning, so a "reproducible" run can never silently drift. The
+    escape hatch ``CSD_OBSERVER_ALLOW_NONDETERMINISM=1`` (documented in
+    AGENTS.md) restores the lenient ``warn_only=True`` for machines
+    whose kernels lack deterministic implementations.
+    """
     seed = int(seed)
     random.seed(seed)
     np.random.seed(seed)
@@ -23,7 +37,8 @@ def seed_everything(seed: int, *, deterministic: bool = True) -> None:
         torch.cuda.manual_seed_all(seed)
     pl.seed_everything(seed, workers=True)
     if deterministic:
-        torch.use_deterministic_algorithms(True, warn_only=True)
+        warn_only = _determinism_env_override()
+        torch.use_deterministic_algorithms(True, warn_only=warn_only)
         torch.backends.cudnn.benchmark = False
 
 
@@ -50,6 +65,12 @@ def fit_model(module: pl.LightningModule, train_bundles: list[dict[str, Any]],
         logger=False, enable_progress_bar=bool(training.get("progress_bar", False)),
         deterministic=bool(training.get("deterministic", True)), callbacks=callbacks,
     )
+    # Lightning's deterministic handling re-applies
+    # ``torch.use_deterministic_algorithms(True, warn_only=True)`` at
+    # fit time, silently downgrading the strict contract; re-assert it
+    # after the Trainer is constructed (R2.6).
+    if bool(training.get("deterministic", True)) and not _determinism_env_override():
+        torch.use_deterministic_algorithms(True, warn_only=False)
     trainer.fit(module, train_dataloaders=train_loader, val_dataloaders=val_loader)
     return trainer
 

@@ -34,25 +34,39 @@ _FACTORIES: dict[str, tuple[Callable[[str, str], Any], str]] = {
     "DMD-CSD": (lambda _key, system: IndicatorMethod("dmd_csd", system), "indicator"),
 }
 
-_REGISTERED: dict[str, tuple[str, Callable[[str, str], Any], str]] = {}
+_REGISTERED: dict[str, tuple[str, Callable[[str, str], Any], str, Any]] = {}
 _LOADED = False
 
 
-def _register(name: str, key: str, factory: Callable[[str, str], Any], family: str) -> None:
+def _register(
+    name: str,
+    key: str,
+    factory: Callable[[str, str], Any],
+    family: str,
+    lit_module: Any = None,
+) -> None:
     if name in _REGISTERED:
         raise ValueError(f"Method {name!r} already registered")
-    _REGISTERED[name] = (key, factory, family)
+    _REGISTERED[name] = (key, factory, family, lit_module)
 
 
 def register_method(
     name: str,
     factory: Callable[[str, str], Any],
     family: str,
+    lit_module: Any = None,
 ) -> None:
-    """Register a method factory (used by neural subpackages)."""
+    """Register a method factory (used by neural subpackages).
+
+    ``lit_module`` is the Lightning training module class (constructor
+    ``(model_cfg, training_cfg, loss_fn)``) for learned methods; the
+    training layer (R1) resolves it via :func:`get_lit_module` so the
+    registry stays the single source of truth for both scoring and
+    training.
+    """
     if family not in ("indicator", "neural"):
         raise ValueError(f"Unknown family: {family!r}")
-    _register(name, name.lower().replace("-", "_"), factory, family)
+    _register(name, name.lower().replace("-", "_"), factory, family, lit_module)
 
 
 def ensure_loaded() -> None:
@@ -102,7 +116,24 @@ def list_methods() -> list[str]:
 
 def list_families() -> dict[str, str]:
     ensure_loaded()
-    return {name: family for name, (_key, _factory, family) in _REGISTERED.items()}
+    return {name: family for name, (_key, _factory, family, _lit) in _REGISTERED.items()}
+
+
+def get_lit_module(name: str) -> Any:
+    """Lightning training-module class for a learned method.
+
+    Returns ``None`` for indicator methods (not trainable) and raises
+    for unknown names. The training layer (R1) uses this instead of
+    importing ``models.neural.*`` directly, keeping the registry the
+    single wiring point.
+    """
+    ensure_loaded()
+    entry = _REGISTERED.get(name)
+    if entry is None:
+        raise ValueError(
+            f"Unknown method: {name!r}. Valid methods: {', '.join(list_methods())}"
+        )
+    return entry[3]
 
 
 def validate_names(names: Sequence[str]) -> None:
@@ -132,7 +163,7 @@ def get_method(name: str, system: str = "fold") -> Any:
         raise ValueError(
             f"Unknown method: {name!r}. Valid methods: {', '.join(list_methods())}"
         )
-    _key, factory, family = _REGISTERED[name]
+    _key, factory, family, _lit = _REGISTERED[name]
     return factory(_key, system)
 
 
@@ -167,6 +198,7 @@ __all__ = [
     "ensure_indicator_loaded",
     "ensure_loaded",
     "ensure_torch_loaded",
+    "get_lit_module",
     "get_method",
     "list_families",
     "list_methods",

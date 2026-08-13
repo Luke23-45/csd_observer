@@ -1,8 +1,14 @@
+# §5.2 DaphniaExt experiment (dryad 10.5061/dryad.q3p64, transcritical,
+# `channel_0` alarm mode). Values pinned to the store.py node (see
+# tests/config/test_yaml_alignment.py). The `download` block lives on the
+# node as None (manual download); unused ProcessingConfig fields are
+# ignored by the DaphniaExt processor (§5.1).
 name: daphnia_ext
 source: dryad
 doi: 10.5061/dryad.q3p64
 licence: CC0-1.0
 bif_type: transcritical
+feature_mode: channel_0
 archive_type: zip
 parser: zip-csv
 expected_files:
@@ -12,23 +18,18 @@ expected_files:
   - path: README_for_data-and-code.txt
     size: 4848
     md5: 11770ce4f5a2b5369dce6f6f846340c5
-download:
-  mode: manual
-  env_token_var: DRYAD_API_TOKEN
-  retries: 3
-  wait_minutes: 10
-  poll_interval_sec: 5
 processing:
   min_length: 100
   normalization: none
+  envelope: raw
+  section_pattern_stationary: Stationary
+  section_pattern_ramp: Ramp
+  ramp_onset_index: 0
   replicate_column: replicate
   time_column: day
   count_column: count
   positive_column: treatment
   tau_annotation_days: 110
-  window_days: null
-  data_file: null
-  treatments: {}
 split:
   replicate_based: true
   seed: 42

@@ -309,16 +309,14 @@ def test_validate_config_min_trajectories_enforced(
     from csd_observer.config.validate import validate_config
 
     cfg = {
-        "n_trajectories": 2,
-        "max_length": 100,
-        "dataset": "synthetic_fold",
+        "dataset": {"name": "synthetic_fold"},
         "models": ["VAR-CSD"],
         "evaluation": "persistenceaware",
         "k_persist": 5,
         "fpr_target": 0.05,
         "seed_offset": 0,
         "n_seeds": 1,
-        "dataset_overrides": {},
+        "dataset_overrides": {"n_trajectories": 2},
     }
     with pytest.raises(ValueError, match="n_trajectories must be >= 3"):
         validate_config(cfg)
@@ -330,18 +328,16 @@ def test_validate_config_min_length_enforced(
     from csd_observer.config.validate import validate_config
 
     cfg = {
-        "n_trajectories": 8,
-        "max_length": 64,
-        "dataset": "synthetic_fold",
+        "dataset": {"name": "synthetic_fold"},
         "models": ["VAR-CSD"],
         "evaluation": "persistenceaware",
         "k_persist": 5,
         "fpr_target": 0.05,
         "seed_offset": 0,
         "n_seeds": 1,
-        "dataset_overrides": {},
+        "dataset_overrides": {"max_length": 64},
     }
-    with pytest.raises(ValueError, match="max_length must be >= 100"):
+    with pytest.raises(ValueError, match="min dataset length must be >= 100"):
         validate_config(cfg)
 
 
@@ -352,16 +348,14 @@ def test_validate_config_skip_min_gates_env_var(
 
     monkeypatch.setenv("CSD_OBSERVER_SKIP_MIN_LENGTH_GATES", "1")
     cfg = {
-        "n_trajectories": 2,
-        "max_length": 64,
-        "dataset": "synthetic_fold",
+        "dataset": {"name": "synthetic_fold"},
         "models": ["VAR-CSD"],
         "evaluation": "persistenceaware",
         "k_persist": 5,
         "fpr_target": 0.05,
         "seed_offset": 0,
         "n_seeds": 1,
-        "dataset_overrides": {},
+        "dataset_overrides": {"n_trajectories": 2, "max_length": 64},
     }
     # Should NOT raise now that the env-var bypass is set.
     validate_config(cfg)
@@ -447,8 +441,9 @@ def test_runner_marks_completed_only_after_summarize(
     """Regression: the lifecycle marker ``.completed`` must be set
     *after* ``summarize_run`` so consumers can use its presence as a
     signal that the tables subtree is built. We verify by reading the
-    runner source for the ordering."""
-    src = Path("src/csd_observer/orchestration/runner.py").read_text(encoding="utf-8")
+    finalize-phase source for the ordering (R1: the runner is a thin
+    driver; the order lives in ``phase_finalize.py``)."""
+    src = Path("src/csd_observer/orchestration/phase_finalize.py").read_text(encoding="utf-8")
     summarize_idx = src.find("summarize_run(writer.root)")
     mark_idx = src.find("writer.mark_completed()")
     assert summarize_idx > 0 and mark_idx > 0

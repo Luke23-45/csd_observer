@@ -1,3 +1,5 @@
+# §9 training group (default). Values pinned to the store.py node (see
+# tests/config/test_yaml_alignment.py).
 enabled: true
 epochs: 50
 batch_size: 64

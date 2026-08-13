@@ -1,6 +1,7 @@
-# Indicator parameter blocks keyed by each method's ``config_path``
-# (§10.1): ``IndicatorMethod`` resolves ``cfg["model"][<key>]`` and the
-# seven per-method files mirror these blocks exactly.
+# §6 model group: full block selection (every method present; per-method
+# yamls select a single block). `in_channels`/`stride` are None on the
+# nodes and therefore omitted (auto-inferred at runtime). Values pinned
+# to the store.py node (see tests/config/test_yaml_alignment.py).
 var_csd:
   window_size: 30
 ac1_csd:
@@ -17,25 +18,21 @@ dmd_csd:
   window_size: 30
   embedding_dim: 6
   rank: 2
-
 lstm:
-  # ``in_channels`` omitted: schema default ``null`` means "auto" —
-  # the runner infers the channel count from the dataset bundle.
   hidden_size: 64
   num_layers: 1
   dropout: 0.1
-
+  score_batch_size: 64
 tcn:
   hidden_size: 32
   kernel_size: 5
   levels: 3
-
+  score_batch_size: 64
 patchtst:
-  # ``in_channels`` omitted: schema default ``null`` means "auto".
   patch_len: 16
-  stride: 16
   d_model: 64
   n_heads: 2
   n_layers: 2
   mlp_ratio: 4.0
   dropout: 0.1
+  score_batch_size: 64

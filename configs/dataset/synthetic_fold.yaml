@@ -1,8 +1,17 @@
+# §5.2 synthetic fold dataset (generator `classic`, channel_0 alarm mode).
+# Values pinned to the store.py node (see tests/config/test_yaml_alignment.py).
 name: synthetic_fold
 source: synthetic
 bif_type: fold
+feature_mode: channel_0
+licence: project-generated
 generator: classic
 difficulty: standard
 n_trajectories: 500
 max_length: 200
 seed: 42
+split:
+  seed: 42
+  train_frac: 0.6
+  val_frac: 0.2
+  replicate_based: true

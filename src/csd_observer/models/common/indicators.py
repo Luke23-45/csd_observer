@@ -113,6 +113,10 @@ class IndicatorMethod:
     ) -> np.ndarray:
         """Alarm scores: mode extraction then the raw indicator.
 
+        The scalar mode comes from the dataset's declaration
+        (``cfg["dataset"]["feature_mode"]``, R2.2) with the
+        system-name fallback for ``None``.
+
         Args:
             features: ``(B, T, C)`` observed features.
             seq_lengths: ``(B,)`` valid prefix lengths.
@@ -122,7 +126,11 @@ class IndicatorMethod:
         Returns:
             ``(B, T)`` float32 alarm scores (``NaN`` where undefined).
         """
-        mode = extract_mode(features, self._system)[:, :, None]
+        feature_mode: Any = None
+        dataset_node = cfg.get("dataset", {})
+        if isinstance(dataset_node, dict):
+            feature_mode = dataset_node.get("feature_mode")
+        mode = extract_mode(features, self._system, mode=None if feature_mode is None else str(feature_mode))[:, :, None]
         params = _resolve_params(self.meta, cfg)
         return np.asarray(
             self._raw_fn(mode, seq_lengths, **params), dtype=np.float32

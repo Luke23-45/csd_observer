@@ -21,6 +21,7 @@ from csd_observer.evaluation.common.metrics import (
     compute_early_warning_auc,
     compute_false_positive_rate,
 )
+from csd_observer.evaluation.common.score_check import validate_scores, warn_unexpected_nan
 from csd_observer.evaluation.persistence.protocol import (
     compute_persistent_detection_metrics,
     compute_persistent_ew_auc,
@@ -49,6 +50,8 @@ def evaluate_method(
     writer: OutputWriter,
     k_persist: int = 5,
     fpr_target: float = 0.05,
+    early_start_delta: float = 50.0,
+    early_end_delta: float = 5.0,
     git_sha: str = "",
     config_hash: str = "",
     store_trajectories: bool = False,
@@ -58,6 +61,11 @@ def evaluate_method(
     """Run one method through the persistence-aware governance pipeline.
 
     Returns the schema-valid row dict (also written to results.jsonl).
+
+    ``early_start_delta``/``early_end_delta`` (R0.2) define the early
+    window ``[tau - early_start_delta, tau - early_end_delta)``; the
+    FKG anchors are parameterized by ``early_start_delta`` so the
+    anchor window and the empirical early window are the same length.
     """
     if evaluation not in {"persistenceaware", "baseline_classic"}:
         raise ValueError(
@@ -92,6 +100,16 @@ def evaluate_method(
     )
     scores_test = method.score(feats_sig[idx_s["test"]], lens_sig[idx_s["test"]], config)
     scores_null = method.score(feats_null[idx_n["test"]], lens_null[idx_n["test"]], config)
+
+    # ---- R2.3: every score buffer must satisfy the (B, T) float contract.
+    # NaN is the documented warm-up absence; Inf and wrong shapes raise.
+    validate_scores(scores_val, lens_sig[idx_s["val"]], context=f"{meta.name} val")
+    validate_scores(scores_val_null, lens_null[idx_n["val"]], context=f"{meta.name} val-null")
+    validate_scores(scores_test, lens_sig[idx_s["test"]], context=f"{meta.name} test")
+    validate_scores(scores_null, lens_null[idx_n["test"]], context=f"{meta.name} null")
+    # Unmasked padding NaN is tolerated but surfaced once per method.
+    warn_unexpected_nan(scores_test, lens_sig[idx_s["test"]], context=f"{meta.name} test")
+    warn_unexpected_nan(scores_null, lens_null[idx_n["test"]], context=f"{meta.name} null")
     t_score = time.time() - t0
 
     # ------------------------------------------------------------- calibrate
@@ -122,6 +140,8 @@ def evaluate_method(
         lens_sig[idx_s["test"]],
         scores_null,
         lens_null[idx_n["test"]],
+        early_start_delta=early_start_delta,
+        early_end_delta=early_end_delta,
     )
     p_ew_auc = compute_persistent_ew_auc(
         scores_test,
@@ -132,16 +152,18 @@ def evaluate_method(
         lens_null[idx_n["test"]],
         threshold=threshold,
         k_persist=k_persist,
+        early_start_delta=early_start_delta,
+        early_end_delta=early_end_delta,
     )
     t_metrics = time.time() - t0
 
     # ----------------------------------------------------- protocol checks
     achieved_step_fpr = fpr
-    # Two anchor windows: the canonical 50-step (§8 FKG) and the
-    # length-aware version used by the trajectory-FPR check.
-    anchor_step = null_anchor_upper_bound(fpr_target, k_persist, 50)
+    # The two FKG anchors use the early-window length as their window so
+    # anchor and empirical quantities are directly comparable (R0.2).
+    anchor_step = null_anchor_upper_bound(fpr_target, k_persist, int(early_start_delta))
     anchor_traj = trajectory_fpr_anchor(
-        fpr_target, k_persist, 50, seq_lengths=lens_null[idx_n["test"]]
+        fpr_target, k_persist, int(early_start_delta), seq_lengths=lens_null[idx_n["test"]]
     )
     # Step-FPR drift gate: the step-FPR is calibrated against the val
     # null, so we tolerate 2× target before flagging drift (§10.3).
@@ -150,7 +172,7 @@ def evaluate_method(
         and achieved_step_fpr > 2.0 * fpr_target
     )
     # Persistent-FPR drift gate: the empirical persistent step-FPR
-    # should not exceed the 50-step FKG anchor by more than 2×. A
+    # should not exceed the FKG anchor by more than 2×. A
     # method whose persistent rate wildly exceeds the i.i.d. anchor
     # is exhibiting positive dependence (calibration artefact or
     # signal leakage) and the run is unusable for the protocol
@@ -168,8 +190,8 @@ def evaluate_method(
         "achieved_persistent_trajectory_fpr": (
             persistent_trajectory_fpr if math.isfinite(persistent_trajectory_fpr) else None
         ),
-        "null_anchor_upper_bound_50step": anchor_step,
-        "trajectory_anchor_upper_bound_50step": anchor_traj,
+        "null_anchor_upper_bound": anchor_step,
+        "trajectory_anchor_upper_bound": anchor_traj,
         "anchor_brackets_empirical": (
             not math.isfinite(persistent_trajectory_fpr)
             or not math.isfinite(anchor_traj)

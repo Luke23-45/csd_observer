@@ -1,33 +1,33 @@
+# §5.2 TAC experiment (dryad 10.5061/dryad.4cj4k, subcritical Hopf,
+# pre-extracted amplitude envelope, `envelope` alarm mode). Values pinned
+# to the store.py node (see tests/config/test_yaml_alignment.py). The
+# `download` block lives on the node as None (manual download via
+# scripts/real_data/fetch_dryad.ps1); unused ProcessingConfig fields are
+# ignored by the TAC processor (§5.1).
 name: tac
 source: dryad
 doi: 10.5061/dryad.4cj4k
 licence: CC0-1.0
 bif_type: subcritical_hopf
+feature_mode: envelope
 archive_type: zip
 parser: nptdms
 expected_files:
   - path: Experimental_time_traces_tdms.zip
     size: 302008984
     md5: 82cc5298c245ad509e1ee414e2c34941
-download:
-  mode: manual
-  env_token_var: DRYAD_API_TOKEN
-  retries: 3
-  wait_minutes: 10
-  poll_interval_sec: 5
 processing:
   min_length: 100
   normalization: none
   envelope: raw
-  sample_rate_hz: null
-  band_low_hz: null
-  band_high_hz: null
-  analysis_window: null
-  channel_group: null
-  channel_name: null
   section_pattern_stationary: Stationary
   section_pattern_ramp: Ramp
   ramp_onset_index: 0
+  replicate_column: replicate
+  time_column: day
+  count_column: count
+  positive_column: treatment
+  tau_annotation_days: 110
 split:
   replicate_based: true
   seed: 42

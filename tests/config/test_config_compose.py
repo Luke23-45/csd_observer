@@ -62,8 +62,11 @@ def test_default_run_composes() -> None:
     config = _compose()
     assert set(config) >= {
         "dataset", "model", "training", "evaluation", "output",
-        "models", "seed", "seed_offset", "n_seeds", "dataset_overrides",
+        "models", "seed_offset", "n_seeds", "dataset_overrides",
     }
+    # ``seed`` was removed from the run config (R3.2): the §13 schedule
+    # is the single seed source.
+    assert "seed" not in config
     assert config["dataset"]["name"] == "synthetic_fold"
     assert config["evaluation"]["name"] == "persistenceaware"
     assert config["models"] == ["VAR-CSD"]
@@ -107,8 +110,8 @@ def test_real_datasets_validate_and_require_processed_data(dataset: str, tmp_pat
 def test_model_group_selects_block() -> None:
     config = _compose(["model=skew_csd"])
     assert config["model"]["skew_csd"]["window_size"] == 30
-    assert config["model"]["var_csd"] is None
-    assert config["model"]["lstm"] is None
+    assert "var_csd" not in config["model"]
+    assert "lstm" not in config["model"]
 
 
 @pytest.mark.parametrize(
@@ -168,9 +171,58 @@ def test_dataset_overrides_whitelist() -> None:
         validate_config(bad)
 
 
+def test_dataset_group_generator_knob_rejected() -> None:
+    # R0.1: ``dataset.n_trajectories=16`` composes (group override) but
+    # is a silent no-op — validation must reject it loudly.
+    config = _compose(["dataset.n_trajectories=16"])
+    assert config["dataset"]["n_trajectories"] == 16
+    with pytest.raises(ValueError, match="dataset_overrides"):
+        validate_config(config)
+
+
+def test_null_seed_is_not_a_whitelisted_override() -> None:
+    # R0.5 (option a): the schedule is the single seed source; a user
+    # attempt to pin ``null_seed`` via the override channel fails.
+    bad = _compose(["+dataset_overrides.null_seed=123"])
+    with pytest.raises(ValueError, match="whitelist"):
+        validate_config(bad)
+
+
 def test_seed_schedule_knobs() -> None:
-    config = _compose(["seed=7", "seed_offset=1000", "n_seeds=3"])
-    assert config["seed"] == 7
+    # R3.2: ``seed`` is no longer a run knob; the schedule derives from
+    # ``seed_offset``/``n_seeds`` alone.
+    config = _compose(["seed_offset=1000", "n_seeds=3"])
+    assert "seed" not in config
     assert config["seed_offset"] == 1000
     assert config["n_seeds"] == 3
     validate_config(config)
+
+
+def test_resolved_yaml_round_trips() -> None:
+    # R3.4: the composed config (minus hydra plumbing) survives a
+    # write-to-yaml → re-compose cycle with an identical hash.
+    from hydra import compose as hydra_compose
+    from hydra import initialize as hydra_initialize
+
+    config = _compose(["+dataset_overrides.n_trajectories=24"])
+    sans_hydra = {k: v for k, v in config.items() if k != "hydra"}
+    round_trip_dir = _REPO / "outputs" / "_round_trip_test"
+    round_trip_dir.mkdir(parents=True, exist_ok=True)
+    import yaml
+
+    (round_trip_dir / "resolved.yaml").write_text(
+        yaml.safe_dump(sans_hydra, sort_keys=False, default_flow_style=False),
+        encoding="utf-8",
+    )
+    try:
+        # Hydra resolves config_path relative to the calling file's dir.
+        rel = os.path.relpath(round_trip_dir, Path(__file__).resolve().parent)
+        with hydra_initialize(version_base=None, config_path=rel):
+            cfg = hydra_compose(config_name="resolved")
+        reread = OmegaConf.to_container(cfg, resolve=True)
+        reread = {k: v for k, v in reread.items() if k != "hydra"}
+        assert reread == sans_hydra
+    finally:
+        import shutil
+
+        shutil.rmtree(round_trip_dir, ignore_errors=True)

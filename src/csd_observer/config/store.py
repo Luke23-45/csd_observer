@@ -1,18 +1,22 @@
-"""Hydra ConfigStore: all groups as structured dataclasses (§10.1).
+"""Schema contract for the protocol configuration groups (§10.1).
 
 Groups: ``dataset`` (5 named datasets with the §4 pinned facts),
 ``model`` (seven indicators, LSTM/TCN/PatchTST), ``training``
 (default, none), ``evaluation`` (persistenceaware, baseline_classic),
 ``output`` (default). The primary config is ``configs/run.yaml``:
-dataset/model/training/evaluation are selected by defaults-list
-entries; run-level knobs (``models`` multi-select, ``seed``,
+dataset/model/training/evaluation/output are selected by defaults-list
+entries; run-level knobs (``models`` multi-select, ``seed_offset``,
 ``n_seeds``, ``dataset_overrides``) live on ``RunConfig`` and are
 applied as CLI overrides.
 
-Structured nodes are registered for every group so a composed YAML file
-is schema-checked at compose time (extra/missing/wrong-typed keys fail
-before any work starts). Where both a file and a node exist for the
-same group/name, Hydra validates the file against the node.
+The group *values* live in ``configs/<group>/<name>.yaml`` — the
+dataclasses here are the in-code schema contract, **not** Hydra
+ConfigStore registrations: a same-name file+node pair would trigger
+Hydra's deprecated "validated against ConfigStore schema" path
+(``config_loader_impl``), so ``register_configs`` only builds the node
+tables. ``validate_config`` type/keys-checks every composed group block
+against the dataclasses, and ``tests/config/test_yaml_alignment.py``
+pins every yaml file to exactly its node's non-None values.
 """
 
 from __future__ import annotations
@@ -77,9 +81,20 @@ class ProcessingConfig:
 
 @dataclass
 class DatasetConfig:
+    """One registry dataset's composed group block (§5.6).
+
+    ``feature_mode`` declares how the *models* package must reduce the
+    dataset's feature channels to the scalar alarm mode (R2.2): ``None``
+    = auto (legacy system-name fallback), ``radial`` = sqrt(x1^2+x2^2)
+    over the first two channels, ``channel_0`` = first channel,
+    ``envelope`` = first channel (pre-extracted amplitude envelope,
+    TAC). The declaration lives here — never in the models package.
+    """
+
     name: str = ""
     source: str = "synthetic"
     bif_type: str = "fold"
+    feature_mode: str | None = None  # "radial" | "channel_0" | "envelope" | None (auto)
     licence: str = "project-generated"
     doi: str | None = None
     version_id: str | None = None
@@ -113,6 +128,7 @@ class LstmConfig:
     hidden_size: int = 64
     num_layers: int = 1
     dropout: float = 0.1
+    score_batch_size: int = 64
 
 
 @dataclass
@@ -121,6 +137,7 @@ class TcnConfig:
     hidden_size: int = 32
     kernel_size: int = 5
     levels: int = 3
+    score_batch_size: int = 64
 
 
 @dataclass
@@ -140,6 +157,7 @@ class PatchTstConfig:
     n_layers: int = 2
     mlp_ratio: float = 4.0
     dropout: float = 0.1
+    score_batch_size: int = 64
 
 
 @dataclass
@@ -192,25 +210,77 @@ class OutputConfig:
 
 @dataclass
 class RunConfig:
+    """Run-level knobs (§10.2).
+
+    ``seed`` was removed (R3.2): the §13 per-seed schedule is the single
+    source of run seeds — ``base = seed_offset + s*1000`` plus the
+    per-split deltas ``+101/+202``. A legacy ``seed`` knob silently
+    contradicted the schedule and is gone.
+    """
+
     models: list[str] = field(default_factory=lambda: ["VAR-CSD"])
-    seed: int = 42
     seed_offset: int = 0
     n_seeds: int = 1
     dataset_overrides: dict[str, Any] = field(default_factory=dict)
 
 
+#: Registered dataset-group nodes by name (R0.1 defaults source: the
+#: validator rejects user-set generator knobs on the ``dataset`` group by
+#: comparing against these registered defaults; the yaml files under
+#: ``configs/dataset/`` are pinned to the same values by
+#: ``tests/config/test_yaml_alignment.py``).
+_DATASET_NODES: dict[str, DatasetConfig] = {}
+
+#: Every group node by (group, name), mirroring the yaml files. Used by
+#: the schema check in ``validate_config`` and the alignment test.
+_GROUP_NODES: dict[tuple[str, str], Any] = {}
+
+
+def dataset_group_default(name: str) -> dict[str, Any]:
+    """Registered default block for a dataset group name (plain dict).
+
+    Returns ``{}`` when the name is not a registered dataset node
+    (e.g. a third-party materialized dataset) — callers treat an empty
+    dict as "no registered defaults available".
+    """
+    import dataclasses
+
+    node = _DATASET_NODES.get(name)
+    if node is None:
+        return {}
+    return dataclasses.asdict(node)
+
+
+def dataset_node(name: str) -> DatasetConfig | None:
+    """Registered schema node for a dataset group name.
+
+    ``None`` when the name is not a registered dataset node (e.g. a
+    third-party materialized dataset) — callers skip schema checks then.
+    """
+    return _DATASET_NODES.get(name)
+
+
 def register_configs() -> None:
-    """Register every group; idempotent across repeated CLI invocations."""
-    from hydra.core.config_store import ConfigStore
+    """Build every group node; idempotent across repeated CLI invocations.
 
-    store = ConfigStore.instance()
+    Nodes are deliberately **not** registered into Hydra's ConfigStore:
+    the group values live in the yaml files under
+    ``configs/<group>/<name>.yaml``, and a same-name file+node pair
+    triggers Hydra's deprecated "validated against ConfigStore schema"
+    path (``config_loader_impl``). The dataclasses remain the in-code
+    schema contract: ``validate_config`` keys/types-checks every composed
+    group block against them, and ``tests/config/test_yaml_alignment.py``
+    asserts the yaml files carry exactly the node values.
+    """
+    _register = _GROUP_NODES.__setitem__
 
-    store.store(group="dataset", name="tac", node=DatasetConfig(
+    _tac_node = DatasetConfig(
         name="tac",
         source="dryad",
         doi="10.5061/dryad.4cj4k",
         licence="CC0-1.0",
         bif_type="subcritical_hopf",
+        feature_mode="envelope",
         archive_type="zip",
         parser="nptdms",
         expected_files=[ExpectedFileConfig(
@@ -228,13 +298,14 @@ def register_configs() -> None:
             section_pattern_ramp="Ramp",
         ),
         split={"replicate_based": True, "seed": 42, "train_frac": 0.6, "val_frac": 0.2},
-    ))
-    store.store(group="dataset", name="daphnia_ext", node=DatasetConfig(
+    )
+    _daphnia_node = DatasetConfig(
         name="daphnia_ext",
         source="dryad",
         doi="10.5061/dryad.q3p64",
         licence="CC0-1.0",
         bif_type="transcritical",
+        feature_mode="channel_0",
         archive_type="zip",
         parser="zip-csv",
         expected_files=[
@@ -250,21 +321,32 @@ def register_configs() -> None:
             window_days=None,
         ),
         split={"replicate_based": True, "seed": 42, "train_frac": 0.6, "val_frac": 0.2},
-    ))
-    for name, bif_type in (("synthetic_fold", "fold"), ("synthetic_hopf", "hopf"), ("synthetic_logistic", "logistic")):
-        store.store(group="dataset", name=name, node=DatasetConfig(
+    )
+    _register(("dataset", "tac"), _tac_node)
+    _DATASET_NODES["tac"] = _tac_node
+    _register(("dataset", "daphnia_ext"), _daphnia_node)
+    _DATASET_NODES["daphnia_ext"] = _daphnia_node
+    for name, bif_type, feature_mode in (
+        ("synthetic_fold", "fold", "channel_0"),
+        ("synthetic_hopf", "hopf", "radial"),
+        ("synthetic_logistic", "logistic", "channel_0"),
+    ):
+        node = DatasetConfig(
             name=name,
             source="synthetic",
             bif_type=bif_type,
+            feature_mode=feature_mode,
             generator="classic",
             difficulty="standard",
             n_trajectories=500,
             max_length=200,
             seed=42,
             split={"seed": 42, "train_frac": 0.6, "val_frac": 0.2, "replicate_based": True},
-        ))
+        )
+        _register(("dataset", name), node)
+        _DATASET_NODES[name] = node
 
-    store.store(group="model", name="default", node=ModelConfig(
+    _register(("model", "default"), ModelConfig(
         var_csd=IndicatorConfig(window_size=30),
         ac1_csd=IndicatorConfig(window_size=30),
         skew_csd=IndicatorConfig(window_size=30),
@@ -276,27 +358,27 @@ def register_configs() -> None:
         tcn=TcnConfig(),
         patchtst=PatchTstConfig(),
     ))
-    store.store(group="model", name="var_csd", node=ModelConfig(var_csd=IndicatorConfig(window_size=30)))
-    store.store(group="model", name="ac1_csd", node=ModelConfig(ac1_csd=IndicatorConfig(window_size=30)))
-    store.store(group="model", name="skew_csd", node=ModelConfig(skew_csd=IndicatorConfig(window_size=30)))
-    store.store(group="model", name="sratio_csd", node=ModelConfig(sratio_csd=IndicatorConfig(window_size=30)))
-    store.store(group="model", name="retrate_csd", node=ModelConfig(retrate_csd=IndicatorConfig(window_size=30)))
-    store.store(group="model", name="dfa_csd", node=ModelConfig(dfa_csd=IndicatorConfig(window_size=100)))
-    store.store(group="model", name="dmd_csd", node=ModelConfig(dmd_csd=IndicatorConfig(window_size=30, embedding_dim=6, rank=2)))
-    store.store(group="model", name="lstm", node=ModelConfig(lstm=LstmConfig()))
-    store.store(group="model", name="tcn", node=ModelConfig(tcn=TcnConfig()))
-    store.store(group="model", name="patchtst", node=ModelConfig(patchtst=PatchTstConfig()))
+    _register(("model", "var_csd"), ModelConfig(var_csd=IndicatorConfig(window_size=30)))
+    _register(("model", "ac1_csd"), ModelConfig(ac1_csd=IndicatorConfig(window_size=30)))
+    _register(("model", "skew_csd"), ModelConfig(skew_csd=IndicatorConfig(window_size=30)))
+    _register(("model", "sratio_csd"), ModelConfig(sratio_csd=IndicatorConfig(window_size=30)))
+    _register(("model", "retrate_csd"), ModelConfig(retrate_csd=IndicatorConfig(window_size=30)))
+    _register(("model", "dfa_csd"), ModelConfig(dfa_csd=IndicatorConfig(window_size=100)))
+    _register(("model", "dmd_csd"), ModelConfig(dmd_csd=IndicatorConfig(window_size=30, embedding_dim=6, rank=2)))
+    _register(("model", "lstm"), ModelConfig(lstm=LstmConfig()))
+    _register(("model", "tcn"), ModelConfig(tcn=TcnConfig()))
+    _register(("model", "patchtst"), ModelConfig(patchtst=PatchTstConfig()))
 
-    store.store(group="training", name="default", node=TrainingConfig())
-    store.store(group="training", name="none", node=TrainingConfig(enabled=False))
+    _register(("training", "default"), TrainingConfig())
+    _register(("training", "none"), TrainingConfig(enabled=False))
 
-    store.store(group="evaluation", name="persistenceaware", node=EvaluationConfig())
-    store.store(group="evaluation", name="baseline_classic", node=EvaluationConfig(
+    _register(("evaluation", "persistenceaware"), EvaluationConfig())
+    _register(("evaluation", "baseline_classic"), EvaluationConfig(
         name="baseline_classic",
         k_persist=1,
     ))
 
-    store.store(group="output", name="default", node=OutputConfig())
+    _register(("output", "default"), OutputConfig())
 
 
 __all__ = [
@@ -313,5 +395,7 @@ __all__ = [
     "RunConfig",
     "TcnConfig",
     "TrainingConfig",
+    "dataset_group_default",
+    "dataset_node",
     "register_configs",
 ]

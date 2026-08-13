@@ -1,5 +1,7 @@
+# §7 evaluation group: persistence-aware protocol (k=5 quiescent windows).
+# Values pinned to the store.py node (see tests/config/test_yaml_alignment.py).
 name: persistenceaware
 k_persist: 5
 fpr_target: 0.05
-early_start_delta: 50
-early_end_delta: 5
+early_start_delta: 50.0
+early_end_delta: 5.0

@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from csd_observer.models.common.interface import MethodMeta
+from csd_observer.models.neural.base.scoring import score_batched
 from csd_observer.models.neural.lstm.model import LstmAlarmNet
 
 
@@ -65,14 +66,22 @@ class LstmAlarmMethod:
         if self._net is None:
             self.fit({}, {}, cfg)
         assert self._net is not None
-        x = torch.as_tensor(np.asarray(features, dtype=np.float32), device=self._device)
-        with torch.no_grad():
-            return torch.sigmoid(self._net(x)).cpu().numpy().astype(np.float32)
+        block = dict(cfg.get("model", {}).get("lstm", {}) or {})
+        batch_size = int(block.get("score_batch_size", 64))
+        return score_batched(
+            self._net,
+            np.asarray(features, dtype=np.float32),
+            np.asarray(seq_lengths, dtype=np.int64),
+            batch_size=batch_size,
+            device=self._device,
+        )
 
 
 def register_lstm_method() -> None:
     from csd_observer.models.common.registry import register_method
-    register_method("LSTM-AlarmNet", LstmAlarmMethod, "neural")
+    from csd_observer.models.neural.lstm.lit_module import LstmAlarmLitModule
+
+    register_method("LSTM-AlarmNet", LstmAlarmMethod, "neural", lit_module=LstmAlarmLitModule)
 
 
 __all__ = ["LstmAlarmMethod", "register_lstm_method"]

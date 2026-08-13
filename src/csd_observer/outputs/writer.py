@@ -233,9 +233,36 @@ class OutputWriter:
         return path
 
     def write_timings(self, timings: dict[str, Any]) -> Path:
+        """Merge a timing entry into the keyed ``timings.json`` (R4).
+
+        File layout: ``{"entries": {f"{method}__s{seed}": {...}}}``.
+        Callers pass ``{"method": ..., "seed": ..., ...timing fields}``
+        and the entry is read-merged under the derived key, so multiple
+        writers (training callbacks, per-method evaluation) accumulate
+        without clobbering each other. A dict without ``method``/``seed``
+        replaces the whole file (explicit-format writes).
+        """
         path = self.paths.times / "timings.json"
+        key: str | None = None
+        if "method" in timings and "seed" in timings:
+            key = f"{timings['method']}__s{timings['seed']}"
+        existing: dict[str, Any] = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict) and isinstance(loaded.get("entries"), dict):
+                    existing = dict(loaded["entries"])
+            except json.JSONDecodeError:
+                existing = {}
+        if key is None:
+            payload = {"entries": existing}
+            if "entries" in timings:
+                payload = dict(timings)
+        else:
+            existing[key] = {**existing.get(key, {}), **dict(timings)}
+            payload = {"entries": existing}
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(timings, f, indent=2, default=_json_default)
+            json.dump(payload, f, indent=2, default=_json_default)
         return path
 
     def write_result_row(self, row: dict[str, Any]) -> Path:

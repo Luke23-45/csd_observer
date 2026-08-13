@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 
+from csd_observer.datasets.common.contract import validate_bundle
 from csd_observer.datasets.common.errors import DatasetError, DatasetErrorCode
 from csd_observer.datasets.common.manifest import read_manifest
 from csd_observer.datasets.common.split import replicate_split
@@ -23,14 +24,29 @@ _SYNTHETIC = {
 def get_dataset(name: str, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     overrides = dict(overrides or {})
     if name in _SYNTHETIC:
-        return _SYNTHETIC[name](overrides)
+        bundle = _SYNTHETIC[name](overrides)
+        _validate_subset(bundle.get("signal"), f"get_dataset({name})/signal")
+        _validate_subset(bundle.get("null"), f"get_dataset({name})/null")
+        return bundle
     return _load_processed(name, overrides)
 
 
+def _validate_subset(subset: Any, context: str) -> None:
+    if not isinstance(subset, dict) or "features" not in subset:
+        raise DatasetError(DatasetErrorCode.MANIFEST_CORRUPT, f"{context}: malformed subset bundle")
+    validate_bundle(subset, context)
+
+
 def list_datasets() -> list[str]:
-    """Every registry-resolvable dataset name (synthetic fast paths,
-    the two real datasets with a processor, and any additional processed
-    datasets already materialized under ``final_data/``)."""
+    """Backward-compatible alias of :func:`list_resolvable`."""
+    return list_resolvable()
+
+
+def list_resolvable() -> list[str]:
+    """Every dataset name that ``get_dataset`` can load right now:
+    synthetic fast paths, the two real datasets with a processor, and any
+    additional processed datasets already materialized under
+    ``final_data/``."""
     from pathlib import Path
 
     from csd_observer.datasets.provision import REAL_DATASETS
@@ -40,6 +56,15 @@ def list_datasets() -> list[str]:
     if root.is_dir():
         names.extend(sorted(p.name for p in root.iterdir() if (p / "processed" / "manifest.json").is_file()))
     return sorted(set(names))
+
+
+def list_provisionable() -> list[str]:
+    """Every dataset name with a registered processor: the synthetic
+    fast paths (already provisioned by definition) and the two real
+    datasets that can be fetched, ingested and processed."""
+    from csd_observer.datasets.provision import REAL_DATASETS
+
+    return sorted(_SYNTHETIC) + sorted(REAL_DATASETS)
 
 
 def _load_processed(name: str, overrides: dict[str, Any]) -> dict[str, Any]:
@@ -70,6 +95,7 @@ def _load_processed(name: str, overrides: dict[str, Any]) -> dict[str, Any]:
                       "source": manifest.get("dataset", {}).get("source", "processed"),
                       "licence": manifest.get("dataset", {}).get("licence", "unknown"),
                       "n_replicates": n}
+    validate_bundle(bundle, f"_load_processed({name})")
     signal_idx = np.flatnonzero(bundle["is_positive"])
     null_idx = np.flatnonzero(~bundle["is_positive"])
     if signal_idx.size == 0 or null_idx.size == 0:
@@ -81,7 +107,8 @@ def _subset(bundle: dict[str, Any], indices: np.ndarray) -> dict[str, Any]:
     out = {k: v[indices] for k, v in bundle.items() if k not in {"split_indices", "meta"}}
     out["split_indices"] = replicate_split(len(indices), seed=42)
     out["meta"] = bundle["meta"].copy()
+    validate_bundle(out, "_subset")
     return out
 
 
-__all__ = ["get_dataset", "list_datasets"]
+__all__ = ["get_dataset", "list_datasets", "list_provisionable", "list_resolvable"]
