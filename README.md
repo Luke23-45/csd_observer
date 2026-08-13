@@ -1,9 +1,9 @@
 # CSD Observer
 
 Persistence-aware early-warning evaluation of critical-slowing-down
-(CSD) observers. One Hydra-composed pipeline runs ten benchmark methods
-(spectral-drift observer, seven published CSD indicators, two neural
-baselines) against synthetic bifurcation datasets and real Dryad
+(CSD) observers. One Hydra-composed pipeline runs nine benchmark methods
+(seven published CSD indicators, two neural baselines) against synthetic
+bifurcation datasets and real Dryad
 datasets (TAC, DaphniaExt) under a fixed-FPR persistence-aware protocol.
 
 ## Install
@@ -29,10 +29,7 @@ python -m csd_observer
 csd-observer "dataset.n_trajectories=16" "dataset.max_length=128" "training=none"
 csd-observer "dataset.n_trajectories=16" "dataset.max_length=128" "models=[VAR-CSD,AC1-CSD,DMD-CSD]" "training=none"
 
-# Spectral-drift observer
-csd-observer "dataset.n_trajectories=16" "dataset.max_length=128" "model=spectral_drift" "models=[Kalman-Spectral-Drift]" "training=none"
-
-# Learned neural baseline (needs training)
+# Neural baseline (needs training)
 csd-observer "models=[LSTM-AlarmNet]"
 ```
 
@@ -41,14 +38,14 @@ csd-observer "models=[LSTM-AlarmNet]"
 | Group | Options |
 |---|---|
 | `dataset` | `synthetic_fold`, `synthetic_hopf`, `synthetic_logistic`, `tac`, `daphnia_ext` |
-| `model` | `default` (all blocks), `spectral_drift`, or one of `{var,ac1,skew,sratio,retrate,dfa,dmd}_csd`, `lstm`, `tcn` |
+| `model` | `default` (all blocks), `lstm`, `tcn`, `patchtst`, or one of `{var,ac1,skew,sratio,retrate,dfa,dmd}_csd` |
 | `training` | `default`, `none` |
 | `evaluation` | `persistenceaware`, `baseline_classic` |
 | `output` | `default` |
 
 `models` (run-level) selects which methods run — display names from
 `csd_observer.models.common.registry` (e.g. `VAR-CSD`,
-`Kalman-Spectral-Drift`, `LSTM-AlarmNet`). Dataset generation knobs go
+`LSTM-AlarmNet`). Dataset generation knobs go
 through the whitelist with Hydra `+` syntax:
 
 ```bash
@@ -82,12 +79,12 @@ src/csd_observer/
   config/                # ConfigStore (structured dataclasses) + §10.3 fail-fast validation
   datasets/              # registry, synthetic generators, real-data ingest/manifest pipeline
   evaluation/            # metric primitives, calibration, persistence-aware governance
-  models/                # registry, indicators/, spectral_drift/, neural/ (LSTM, TCN)
+  models/                # registry, indicators/, neural/ (LSTM, TCN, PatchTST)
   orchestration/         # runner (pipeline order only)
   outputs/               # writer, ledger, schema, summarizer, tables
   training/              # Lightning training for neural baselines
 docs/Implementation_plan/  # plan + status ledger (authoritative for phases)
-tests/                   # pytest suite (config compose, e2e smoke, indicators, spectral)
+tests/                   # pytest suite (config compose, e2e smoke, indicators, models)
 ```
 
 ## Evaluation protocol

@@ -108,7 +108,7 @@ def test_model_group_selects_block() -> None:
     config = _compose(["model=skew_csd"])
     assert config["model"]["skew_csd"]["window_size"] == 30
     assert config["model"]["var_csd"] is None
-    assert config["model"]["spectral_drift"] is None
+    assert config["model"]["lstm"] is None
 
 
 @pytest.mark.parametrize(

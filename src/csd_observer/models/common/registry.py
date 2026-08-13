@@ -4,18 +4,16 @@ Supersedes ``benchmark/methods.py`` (plan A6.1: "Registry
 ``get_method/list_methods/validate_names`` supersedes
 ``benchmark/methods.py``"). The registry:
 
-* maps display names to method factories (indicators, spectral-drift
-  observer, neural baselines);
+* maps display names to method factories (indicators and neural
+  baselines);
 * builds a fresh method instance per ``(name, system)`` pair so every
-  method carries its own fitted state (spectral grid-search result,
-  neural weights);
+  method carries its own fitted state (neural weights);
 * validates method names against the config before any run starts.
 
 Methods are imported lazily so importing the registry never pulls in
 torch (keeps indicator-only runs light): the seven indicators register
-at module import (pure NumPy), while the spectral-drift observer and
-the neural baselines register on the first call to
-:func:`ensure_loaded` / any registry access.
+at module import (pure NumPy), while the neural baselines register on
+the first call to :func:`ensure_loaded` / any registry access.
 """
 
 from __future__ import annotations
@@ -51,8 +49,8 @@ def register_method(
     factory: Callable[[str, str], Any],
     family: str,
 ) -> None:
-    """Register a method factory (used by spectral/neural subpackages)."""
-    if family not in ("indicator", "spectral", "neural"):
+    """Register a method factory (used by neural subpackages)."""
+    if family not in ("indicator", "neural"):
         raise ValueError(f"Unknown family: {family!r}")
     _register(name, name.lower().replace("-", "_"), factory, family)
 
@@ -79,9 +77,9 @@ def ensure_indicator_loaded() -> None:
 def ensure_torch_loaded() -> None:
     """Register torch-dependent methods exactly once (idempotent).
 
-    Spectral-drift and the neural baselines self-register on import;
-    importing them pulls in torch, so this happens lazily and only when
-    a registry access needs the full catalog.
+    The neural baselines self-register on import; importing them pulls
+    in torch, so this happens lazily and only when a registry access
+    needs the full catalog.
     """
     global _LOADED
     if _LOADED:
@@ -89,9 +87,7 @@ def ensure_torch_loaded() -> None:
     from csd_observer.models.neural.lstm.method import register_lstm_method  # noqa: E402
     from csd_observer.models.neural.patchtst.method import register_patchtst_method  # noqa: E402
     from csd_observer.models.neural.tcn.method import register_tcn_method  # noqa: E402
-    from csd_observer.models.spectral_drift.method import register_spectral_method  # noqa: E402
 
-    register_spectral_method()
     register_lstm_method()
     register_tcn_method()
     register_patchtst_method()
@@ -126,7 +122,7 @@ def get_method(name: str, system: str = "fold") -> Any:
     Indicator methods are built without importing torch. When the name
     is not among the seven indicators, the torch-bearing modules are
     lazily imported (once) and the lookup is retried — so
-    ``get_method("Kalman-Spectral-Drift")`` works on the first call of
+    ``get_method("LSTM-AlarmNet")`` works on the first call of
     a process, in any test/import order.
     """
     ensure_indicator_loaded()

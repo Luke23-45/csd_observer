@@ -300,29 +300,6 @@ def test_write_result_row_is_atomic_append(tmp_path: Path) -> None:
     assert len(lines) == 20
 
 
-# ============================================================== spectral seed
-
-
-def test_spectral_method_per_seed_observer_seed_changes_with_run_seed() -> None:
-    """The per-seed run seed must propagate into the observer RNG so
-    per-seed reproducibility holds; two different run_seeds produce
-    different ``_fit_seed``."""
-    from csd_observer.models.common.registry import get_method
-    from csd_observer.models.spectral_drift.method import SpectralDriftMethod
-
-    m = get_method("Kalman-Spectral-Drift", "fold")
-    assert isinstance(m, SpectralDriftMethod)
-    # ``fit`` records the per-seed run seed (``__run_seed__``) into
-    # ``_fit_seed``; two different run seeds must yield two different
-    # observer seeds.
-    m._fit_seed = 101
-    s1 = m._observer_seed()
-    m._fit_seed = 202
-    s2 = m._observer_seed()
-    assert s1 != s2
-    assert s1 == 101 and s2 == 202
-
-
 # ============================================================== validate_config
 
 
@@ -512,12 +489,10 @@ def test_registry_lists_only_display_names() -> None:
     assert "LSTM" not in names
     assert "TCN" not in names
     assert "VAR-CSD" in names
-    assert "Kalman-Spectral-Drift" in names
     assert "LSTM-AlarmNet" in names
     assert "TCN-AlarmNet" in names
     families = list_families()
     assert families["VAR-CSD"] == "indicator"
-    assert families["Kalman-Spectral-Drift"] == "spectral"
     assert families["LSTM-AlarmNet"] == "neural"
 
 
@@ -540,7 +515,7 @@ def test_supported_systems_cover_real_bif_types() -> None:
 
 def test_extract_mode_subcritical_hopf_two_channels_uses_radius() -> None:
     """2-channel subcritical_hopf (synthetic): radial mode, same rule as hopf."""
-    from csd_observer.models.spectral_drift import extract_mode
+    from csd_observer.models.common.mode import extract_mode
 
     rng = np.random.default_rng(7)
     x1 = rng.normal(size=(4, 50)).astype(np.float32)
@@ -554,7 +529,7 @@ def test_extract_mode_subcritical_hopf_single_channel_passthrough() -> None:
     """TAC (§5.4): the amplitude envelope is observed directly; a
     1-channel subcritical_hopf trace passes through unchanged (no radius
     rule, unlike ``hopf`` which hard-requires 2 channels)."""
-    from csd_observer.models.spectral_drift import extract_mode
+    from csd_observer.models.common.mode import extract_mode
 
     x = np.linspace(0.1, 2.0, 40, dtype=np.float32).reshape(2, 20, 1)
     mode = extract_mode(x, "subcritical_hopf")
@@ -563,7 +538,7 @@ def test_extract_mode_subcritical_hopf_single_channel_passthrough() -> None:
 
 def test_extract_mode_transcritical_single_channel_passthrough() -> None:
     """DaphniaExt (§4): per-replicate population counts, single channel."""
-    from csd_observer.models.spectral_drift import extract_mode
+    from csd_observer.models.common.mode import extract_mode
 
     x = np.arange(8 * 30, dtype=np.float32).reshape(8, 30, 1)
     mode = extract_mode(x, "transcritical")

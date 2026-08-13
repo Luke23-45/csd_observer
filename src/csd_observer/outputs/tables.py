@@ -217,7 +217,7 @@ def write_paired_wilcoxon_csv(
     rows: Sequence[ResultRow],
     path: Path,
     *,
-    baseline: str = "Kalman-Spectral-Drift",
+    baseline: str = "VAR-CSD",
 ) -> Path:
     methods = sorted({r.method for r in rows})
     out: list[dict[str, object]] = []

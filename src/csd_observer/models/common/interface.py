@@ -1,7 +1,7 @@
 """Common interface for every benchmark method (§6.1 of the plan).
 
-Every method — statistical indicator, spectral-drift observer, or neural
-baseline — exposes the same contract so the governance driver
+Every method — statistical indicator or neural baseline — exposes the
+same contract so the governance driver
 (``evaluation/persistence/governance.py``) treats them identically.
 
     fit(train_arrays, val_arrays, cfg) -> None   # no-op for non-learned
@@ -27,7 +27,7 @@ class MethodMeta:
     """Static description of one benchmark method."""
 
     name: str
-    family: str  # "indicator" | "spectral" | "neural"
+    family: str  # "indicator" | "neural"
     is_learned: bool
     scope_caveat: str = ""  # e.g. "theoretically grounded for fold; empirical elsewhere"
     bif_types_supported: list[str] = field(default_factory=list)  # empty = any
@@ -48,7 +48,7 @@ class MethodInterface(Protocol):
         val_arrays: dict[str, Any],
         cfg: dict[str, Any],
     ) -> None:
-        """Train (learned methods) or calibrate (spectral grid search).
+        """Train (learned methods).
 
         Non-learned methods: no-op.
         """

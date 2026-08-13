@@ -7,7 +7,7 @@
 ## Phase 0 — Dependencies & Scaffolding
 
 - [x] **L0.1** Add to `pyproject.toml` + install: `hydra-core`, `omegaconf`, `pytorch-lightning`, `torchmetrics`, `requests`, `nptdms`, `filelock`; commit lockfile.
-- [x] **L0.2** Package skeleton (all with `__init__.py` + docstring): `datasets/{common,tac,daphnia_ext,synthetic/{common,fold,hopf,logistic}}`, `models/{common,indicators/{var_csd,ac1_csd,skew_csd,sratio_csd,retrate_csd,dfa_csd,dmd_csd},spectral_drift,neural/}`, `training/common`, `evaluation/{common,persistence}`, `outputs/common`, `orchestration`, `cli`, `config`.
+- [x] **L0.2** Package skeleton (all with `__init__.py` + docstring): `datasets/{common,tac,daphnia_ext,synthetic/{common,fold,hopf,logistic}}`, `models/{common,indicators/{var_csd,ac1_csd,skew_csd,sratio_csd,retrate_csd,dfa_csd,dmd_csd},neural/}`, `training/common`, `evaluation/{common,persistence}`, `outputs/common`, `orchestration`, `cli`, `config`. *(spectral_drift skeleton removed with the method at Phase 4 post-hoc.)*
 - [x] **L0.3** Persistence roots: `final_data/<5 datasets>/{raw,processed}` + `.gitkeep`; `outputs/_ledger/.gitkeep`; `.gitignore` (keep manifests + `.gitkeep`, ignore data/artifacts).
 - [~] **L0.4** Enforce the one-way import rule (§3 of plan) via ruff config + import-walk test. *(Import-walk test not yet written.)*
 
@@ -38,7 +38,7 @@
 - [x] **L2.3** `evaluation/persistence/protocol.py` — §8.1–8.4: alarm indicator, causal run-length `r_t`, persistent alarm (`r_t ≥ k_persist`), P-DT, P-EW-AUC, i.i.d. null-anchor cross-check.
 - [x] **L2.4** Censoring policy §8.2: `detection_rate` separate from `detection_time`; no ∞-averaging.
 - [x] **L2.5** Achieved-FPR check §8.5: test-null step-FPR + persistent-FPR reported vs target; `PROTOCOL_DRIFT` warn >2×.
-- [x] **L2.6** `evaluation/persistence/governance.py` — single driver §8.7; replaces `evaluate_indicator/evaluate_spectral` call sites.
+- [x] **L2.6** `evaluation/persistence/governance.py` — single driver §8.7; replaces `evaluate_indicator` call sites. *(`evaluate_spectral` obsolete since the spectral-drift method was removed at Phase 4 post-hoc.)*
 - [ ] **L2.7** `tests/test_persistence_protocol.py` — null-anchor bracket; monotonicity in `k_persist` (FPR↓, P-DT↑); `k_persist=1 ≡ classic`; censoring; causality (no future leakage).
 - [ ] **L2.8** `tests/test_governance.py` — e2e on synthetic fold fixture; schema-valid rows; achieved-FPR within 2× target.
 - [x] **L2.9** Delete `utils/evaluation.py`, `utils/metrics.py` after parity. *(Done at L7.4: legacy `utils/` package removed; tests migrated to `evaluation/common/*` and `models/common/detrend`.)*
@@ -77,7 +77,7 @@
 - [x] **L4.1** `models/common/interface.py` — `MethodMeta`, `MethodInterface` (fit/score/meta) §6.1.
 - [x] **L4.2** `models/common/registry.py` — supersedes `benchmark/methods.py`; name validation + catalog cross-check retained.
 - [x] **L4.3** Relocate 7 indicators (§6.2); zero behavior change; **parity gate**: existing per-indicator tests pass at new paths.
-- [x] **L4.4** Wrap spectral-drift to interface; no-op `fit`; `scope_caveat` set; README (chunking + precision policy, verified in Phase 8).
+- [x] **L4.4** ~~Wrap spectral-drift to interface~~ **REVERTED**: spectral-drift hypothesis failed; method `models/spectral_drift/`, `SpectralDriftConfig`, `model=spectral_drift`, `Kalman-Spectral-Drift` registry entry, tests, and docs removed; `extract_mode` inlined to `models/common/mode.py`.
 - [x] **L4.5** `docs/Implementation_plan/neural_baselines.md` — pin 2–3 families (§6.4: recurrent alarm net, TCN, patch-transformer) with fact-checked citations, objectives, capacity budget, fairness rationale. No fabricated numbers.
 - [x] **L4.6** Implement `models/neural/<b1|b2|b3>/{model.py, lit_module.py, config.yaml}` under the fairness contract. *(LSTM + TCN + PatchTST implemented; `config.yaml` in `configs/model/{lstm,tcn,patchtst}.yaml`; PatchTST at G4: causal patch transformer, sinusoidal positions, piecewise emission from completed patches, multi-channel smoke green.)*
 - [ ] **L4.7** `tests/test_indicators_parity.py` + `tests/test_neural_*.py` — 1-epoch smoke (8 trajectories), score shapes, finite scores.
@@ -132,7 +132,7 @@ Master matrix — every cell needs a run dir + ledger rows:
 | DaphniaExt | ✅ | ✅ | ✅ | ✅ |
 | Synthetic fold / hopf / logistic (control) | ✅ | ✅ | ✅ | ✅ |
 
-- [ ] **L8.1** TAC: `+dataset=tac +models=spectral_drift +evaluation=persistenceaware` (+ classic twin at `k_persist=1`).
+- [ ] **L8.1** TAC: `+dataset=tac +models=VAR-CSD +evaluation=persistenceaware` (+ classic twin at `k_persist=1`).
 - [ ] **L8.2** TAC: all indicators + neural baselines under both evaluations.
 - [ ] **L8.3** DaphniaExt: same matrix.
 - [ ] **L8.4** Synthetic control channel under both evaluations (replaces `patients_*` sweep).
@@ -146,7 +146,7 @@ Master matrix — every cell needs a run dir + ledger rows:
 
 - [x] **L9.1** README rewrite: Hydra-CLI usage, real + synthetic commands, link to `docs/Implementation_plan/`.
 - [x] **L9.2** `AGENTS.md`: pin canonical commands (`pytest`, `ruff check .`, hydra smoke, ingest dry-run) so future sessions don't rediscover them.
-- [~] **L9.3** Full `pytest -v` green; `ruff check .` clean; hydra smoke green; TAC + DaphniaExt sandbox runs green with manifests. *(213 tests + `ruff check .` clean; hydra smoke green for indicator, spectral, and trained LSTM runs; sandbox real-data runs pending data access.)*
+- [~] **L9.3** Full `pytest -v` green; `ruff check .` clean; hydra smoke green; TAC + DaphniaExt sandbox runs green with manifests. *(Spectral-drift method removed at Phase 4 post-hoc (hypothesis failed); remaining suite green for indicator and trained LSTM runs; sandbox real-data runs pending data access.)*
 - [ ] **L9.4** Remove `legacy/` and `studies/` (after L7.3 shim); ledger references archived commit.
 - [ ] **L9.5** Tag `v0.2.0-protocol` once Phase 8 runs are reproducible from a clean checkout.
 

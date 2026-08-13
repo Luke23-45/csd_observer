@@ -5,7 +5,7 @@ Canonical commands for this repository. Run these before/after any change so the
 ## Tests
 
 ```powershell
-python -m pytest tests -q          # full suite (indicator + spectral + config + e2e)
+python -m pytest tests -q          # full suite (indicator + config + e2e + models)
 python -m pytest tests\config\test_config_compose.py -q      # composition/invariant tests
 python -m pytest tests\orchestration\test_e2e_smoke.py -q    # end-to-end smoke (fast, tmp dirs)
 ```
@@ -24,7 +24,6 @@ From the repo root, small synthetic runs that touch the full pipeline
 ```powershell
 $env:PYTHONPATH = "src"
 python -m csd_observer.cli.main "dataset.n_trajectories=16" "dataset.max_length=128" "training=none"
-python -m csd_observer.cli.main "dataset.n_trajectories=16" "dataset.max_length=128" "model=spectral_drift" "models=[Kalman-Spectral-Drift]" "training=none"
 python -m csd_observer.cli.main "dataset.n_trajectories=16" "dataset.max_length=128" "model=lstm" "models=[LSTM-AlarmNet]" "training.epochs=2" "training.patience=2"
 ```
 
@@ -55,8 +54,7 @@ the distinct name.
   `configs/{dataset,model,training,evaluation,output}/` with structured
   schema validation via `csd_observer.config.store.register_configs`.
 - Method display names come from `csd_observer.models.common.registry`
-  (e.g. `VAR-CSD`, `Kalman-Spectral-Drift`, `LSTM-AlarmNet`), not module
-  keys.
+  (e.g. `VAR-CSD`, `LSTM-AlarmNet`), not module keys.
 - Legacy packages (`benchmark/`, `config/load.py`, `data/`, `utils/`,
   legacy run yamls) were removed at L7.4 — do not import them.
 - Neural model files (`configs/model/{lstm,tcn}.yaml`) nest params under

@@ -26,7 +26,6 @@ _METHOD_ORDER = [
     "RETRATE-CSD",
     "DFA-CSD",
     "DMD-CSD",
-    "Kalman-Spectral-Drift",
     "LSTM-AlarmNet",
     "TCN-AlarmNet",
     "PatchTST-AlarmNet",

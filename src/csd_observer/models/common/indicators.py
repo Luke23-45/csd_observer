@@ -21,8 +21,8 @@ from typing import Any
 import numpy as np
 
 from csd_observer.models.common.interface import MethodMeta
+from csd_observer.models.common.mode import extract_mode
 from csd_observer.models.common.systems import SUPPORTED_SYSTEMS
-from csd_observer.models.spectral_drift.preprocess import extract_mode
 
 INDICATOR_DEFAULTS: dict[str, dict[str, Any]] = {
     "var_csd": {"window_size": 30},

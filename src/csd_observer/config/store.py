@@ -1,7 +1,7 @@
 """Hydra ConfigStore: all groups as structured dataclasses (§10.1).
 
 Groups: ``dataset`` (5 named datasets with the §4 pinned facts),
-``model`` (spectral-drift, seven indicators, LSTM/TCN), ``training``
+``model`` (seven indicators, LSTM/TCN/PatchTST), ``training``
 (default, none), ``evaluation`` (persistenceaware, baseline_classic),
 ``output`` (default). The primary config is ``configs/run.yaml``:
 dataset/model/training/evaluation are selected by defaults-list
@@ -99,20 +99,6 @@ class DatasetConfig:
 
 
 @dataclass
-class SpectralDriftConfig:
-    n_particles: int = 500
-    c_min: float = 0.001
-    delta: float = 0.05
-    center_window: int = 50
-    q_drift_grid: list[float] = field(
-        default_factory=lambda: [1.0e-6, 1.0e-5, 1.0e-4, 1.0e-3, 1.0e-2, 1.0e-1]
-    )
-    sigma_u_grid: list[float] = field(
-        default_factory=lambda: [0.15, 0.3, 0.6, 1.0]
-    )
-
-
-@dataclass
 class IndicatorConfig:
     window_size: int = 30
     embedding_dim: int | None = None
@@ -158,7 +144,6 @@ class PatchTstConfig:
 
 @dataclass
 class ModelConfig:
-    spectral_drift: SpectralDriftConfig | None = None
     var_csd: IndicatorConfig | None = None
     ac1_csd: IndicatorConfig | None = None
     skew_csd: IndicatorConfig | None = None
@@ -280,7 +265,6 @@ def register_configs() -> None:
         ))
 
     store.store(group="model", name="default", node=ModelConfig(
-        spectral_drift=SpectralDriftConfig(),
         var_csd=IndicatorConfig(window_size=30),
         ac1_csd=IndicatorConfig(window_size=30),
         skew_csd=IndicatorConfig(window_size=30),
@@ -292,7 +276,6 @@ def register_configs() -> None:
         tcn=TcnConfig(),
         patchtst=PatchTstConfig(),
     ))
-    store.store(group="model", name="spectral_drift", node=ModelConfig(spectral_drift=SpectralDriftConfig()))
     store.store(group="model", name="var_csd", node=ModelConfig(var_csd=IndicatorConfig(window_size=30)))
     store.store(group="model", name="ac1_csd", node=ModelConfig(ac1_csd=IndicatorConfig(window_size=30)))
     store.store(group="model", name="skew_csd", node=ModelConfig(skew_csd=IndicatorConfig(window_size=30)))
@@ -328,7 +311,6 @@ __all__ = [
     "PatchTstConfig",
     "ProcessingConfig",
     "RunConfig",
-    "SpectralDriftConfig",
     "TcnConfig",
     "TrainingConfig",
     "register_configs",

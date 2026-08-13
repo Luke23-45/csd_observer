@@ -1,4 +1,9 @@
-"""Preprocessing for the spectral-drift observer (mode extraction and causal centring)."""
+"""Shared preprocessing for the score pipeline (mode extraction).
+
+Only the scalar dominant-mode extraction survives the removal of the
+spectral-drift observer; it is required by ``models/common/indicators.py``
+before any raw indicator runs.
+"""
 
 from __future__ import annotations
 
@@ -46,50 +51,4 @@ def extract_mode(features: np.ndarray, system: str) -> np.ndarray:
     return np.asarray(features[..., 0], dtype=np.float32)
 
 
-def running_mean_center(
-    seq: np.ndarray,
-    seq_lengths: np.ndarray,
-    window: int = 50,
-) -> np.ndarray:
-    """Subtract a causal running mean (centring) from each trajectory.
-
-    Implements the preprocessing step of the formal definition: the OU
-    transition is written for a centred mode (``bar_u = 0``), so the
-    equilibrium is removed by a running-mean subtraction. The window is
-    causal (uses only past samples) so the observer remains online. No
-    ground-truth parameter values are used.
-
-    Args:
-        seq: ``(B, T)`` float array of mode sequences.
-        seq_lengths: ``(B,)`` integer array of valid prefix lengths.
-        window: running-mean window size (effective window is
-            ``min(window, t+1)`` at each step).
-
-    Returns:
-        ``(B, T)`` float32 array, centred per trajectory.
-    """
-    seq = np.asarray(seq, dtype=np.float32)
-    B, T = seq.shape
-    seq_lengths = np.asarray(seq_lengths, dtype=np.int64)
-    if seq_lengths.shape[0] != B:
-        raise ValueError(
-            f"seq_lengths length {seq_lengths.shape[0]} != B {B}"
-        )
-    window = max(1, int(window))
-    centered = np.zeros_like(seq)
-    cumsum = np.cumsum(seq, axis=1)
-    for b in range(B):
-        L = int(seq_lengths[b])
-        if L <= 0:
-            continue
-        L = min(L, T)
-        W = min(window, L)
-        mean = np.zeros(T, dtype=np.float32)
-        for t in range(L):
-            lo = max(0, t - W + 1)
-            hi = t + 1
-            mean[t] = (
-                cumsum[b, hi - 1] - (cumsum[b, lo - 1] if lo > 0 else 0.0)
-            ) / (hi - lo)
-        centered[b, :L] = seq[b, :L] - mean[:L]
-    return centered
+__all__ = ["extract_mode"]

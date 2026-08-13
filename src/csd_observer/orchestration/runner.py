@@ -137,8 +137,8 @@ def run_benchmark(
                     method, bundle, writer, s, config, training
                 )
                 # Stash the per-seed run seed in a reserved config key so
-                # stochastic methods (e.g. Kalman-Spectral-Drift) can seed
-                # their internal RNG from the run schedule.
+                # stochastic methods (e.g. LSTM-AlarmNet) can seed their
+                # internal RNG from the run schedule.
                 per_method_cfg = dict(per_method_cfg)
                 per_method_cfg["__run_seed__"] = schedule["signal"]
                 evaluate_method(
@@ -157,7 +157,7 @@ def run_benchmark(
     except BaseException as exc:
         # Partial rows written before the failure are intentional: a
         # multi-method run that succeeds for VAR-CSD and fails on
-        # Kalman-Spectral-Drift leaves VAR-CSD's row on disk so the
+        # LSTM-AlarmNet leaves VAR-CSD's row on disk so the
         # partial result is still analysable. Downstream consumers
         # must filter by ``status`` in the ledger / lifecycle marker.
         writer.mark_failed(exc)
