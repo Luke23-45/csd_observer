@@ -1,17 +1,15 @@
-"""End-to-end processed-dataset pipeline driver (§5.2–§5.5 of the plan).
+"""End-to-end processed-dataset pipeline driver.
 
-    RESOLVE → … → READY_RAW → PROCESS → SPLIT → READY_PROCESSED
+    RESOLVE → FETCH_REMOTE → READY_RAW → PROCESS → SPLIT → READY_PROCESSED
 
 The driver is dataset-agnostic: it receives a processor handle
-(``raw_dir -> bundle``), runs the §5.4 mandatory gates, applies the
-replicate-level split, performs leak-free normalization (statistics fit
-on the train split only), and writes ``arrays.npz`` + ``manifest.json``
-atomically under ``root/processed``.
-
-Dataset-specific processors (TAC/DaphniaExt) live in their own
-subpackages and are wired in at the orchestration layer; the synthetic
-processor ships here so the synthetic manifest pipeline (ledger L3.15)
-works end to end without network or raw files.
+(``raw_dir -> bundle``), runs mandatory gates, applies replicate-level
+splitting, performs leak-free normalization (statistics fit strictly on
+the train split only), and writes structured splits:
+    ``root/processed/<dataset>/train/train.npz``
+    ``root/processed/<dataset>/val/val.npz``
+    ``root/processed/<dataset>/test/test.npz`` (if non-empty)
+along with split manifests and a root ``manifest.json``.
 """
 
 from __future__ import annotations
@@ -27,23 +25,15 @@ import numpy as np
 from csd_observer.datasets.common.errors import DatasetError, DatasetErrorCode
 from csd_observer.datasets.common.ingest import ingest_raw
 from csd_observer.datasets.common.manifest import write_manifest
+from csd_observer.datasets.common.remote import fetch_remote_dataset
 from csd_observer.datasets.common.split import replicate_split
 from csd_observer.datasets.common.states import IngestState, cached_manifest
 
-# §5.4 gate 2: every trajectory must reach the longest indicator window
-# (DFA). Trajectories below this are excluded with logged counts, never
-# dropped silently.
 MIN_LENGTH = 100
 
 _BUNDLE_KEYS = ("features", "seq_lengths", "bifurcation_times", "is_positive")
 
-# Default arrays file name; pinned so consumers can locate the bundle
-# without scanning the manifest for an ``arrays_file`` field.
-ARRAYS_FILE = "arrays.npz"
-
-# Registry name -> on-disk data directory name. A single source of truth so
-# the raw/ and processed/ folders on disk match the raw layout the user
-# placed under ``datasets/raw/`` (the registry name may differ).
+# Registry name -> on-disk data directory name.
 _DATA_DIR = {"daphnia_ext": "daphnia"}
 
 
@@ -69,16 +59,7 @@ def processed_dir(data_root: str | Path, name: str) -> Path:
 
 
 def _matches_processing(manifest: dict[str, Any], config: dict[str, Any]) -> bool:
-    """§13 staleness guard: a changed pipeline invalidates the cache.
-
-    The manifest's ``processing.params`` are compared against the current
-    config (with ``min_length`` defaulted). Normalization policy is also
-    considered (it lives at ``manifest.normalization``, not under
-    ``processing``, but a change in policy still invalidates the cache
-    because it changes the on-disk array bytes). The recorded ``git_sha``
-    must also match HEAD so a processor-code change invalidates the
-    cache (provisioning re-runs against the new implementation).
-    """
+    """Staleness guard: a changed pipeline invalidates the cache."""
     recorded = (manifest.get("processing", {}) or {}).get("params", {})
     current = dict(config.get("processing", {}) or {})
     current.setdefault("min_length", MIN_LENGTH)
@@ -93,13 +74,7 @@ def _matches_processing(manifest: dict[str, Any], config: dict[str, Any]) -> boo
 
 
 def _git_sha() -> str:
-    """Return the current HEAD SHA, or ``""`` when not in a git repo.
-
-    Consistent with :func:`csd_observer.outputs.metadata._git_sha` so
-    the dataset manifest's ``git_sha`` and the run environment's
-    ``git_sha`` agree. Empty string is the unambiguous sentinel for
-    "no git available"; downstream consumers can treat it as such.
-    """
+    """Return the current HEAD SHA, or empty string when not in a git repo."""
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
@@ -108,25 +83,17 @@ def _git_sha() -> str:
         return ""
 
 
-def content_hash(arrays_path: Path, params: dict[str, Any]) -> str:
-    """§5.5 ``content_hash``: sha256 over array bytes + canonical params.
-
-    Trust model: the hash binds the on-disk array bytes and the
-    ``processing.params`` + split counts + normalization parameters. It
-    does *not* cover ``gates.passed`` or ``split.indices`` — those are
-    derived from the bundle and the params, so tampering with them while
-    preserving the bundle implies recomputing or guessing the params.
-    An adversary who edits ``gates.passed`` in the manifest keeps a
-    "valid" hash; this is acceptable because ``gates.passed`` is a
-    derived self-attestation, not a security boundary.
-    """
+def content_hash(split_paths: list[Path], params: dict[str, Any]) -> str:
+    """SHA-256 over split array bytes + canonical processing params."""
     import hashlib
 
     h = hashlib.sha256()
-    with open(arrays_path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(65536), b""):
-            h.update(chunk)
-    h.update(b"\0")
+    for p in sorted(split_paths):
+        if p.is_file():
+            with open(p, "rb") as handle:
+                for chunk in iter(lambda: handle.read(65536), b""):
+                    h.update(chunk)
+            h.update(b"\0")
     h.update(json.dumps(params, sort_keys=True, default=str).encode("utf-8"))
     return h.hexdigest()
 
@@ -139,61 +106,101 @@ def run_pipeline(
     *,
     token: str | None = None,
     extra_validator: Callable[[dict[str, Any]], None] | None = None,
+    force_rebuild: bool = False,
 ) -> IngestState:
-    """Drive a dataset from resolution to a validated processed manifest.
-
-    Idempotent: a valid existing manifest short-circuits to
-    ``READY_PROCESSED``. Every step is checksum-first; failures raise
-    :class:`DatasetError` with the §5.2 error codes and never leave a
-    half-written manifest (arrays + manifest are written atomically).
-
-    ``source == "synthetic"`` skips raw ingestion entirely (no raw
-    files exist); the processor builds the bundle from the generators.
-
-    ``root`` is the data root (e.g. ``datasets``); per-dataset raw and
-    processed directories are derived via :func:`raw_dir` /
-    :func:`processed_dir` so the layout is
-    ``<root>/raw/<name>`` and ``<root>/processed/<name>``.
-    """
+    """Drive a dataset from state resolution to a validated processed split structure."""
     root = Path(root)
     raw = raw_dir(root, name)
     processed = processed_dir(root, name)
-    cached = cached_manifest(processed)
-    if cached is not None and _matches_processing(cached, config):
-        return IngestState.READY_PROCESSED
-    # A cached manifest that no longer matches forces re-processing:
-    # without this, ``ingest_raw``'s own short-circuit would return the
-    # stale bundle as READY_PROCESSED and the guard above would never
-    # trigger for real datasets (only ``source == "synthetic"`` paths,
-    # which skip raw ingestion, re-provisioned before this).
-    stale = cached is not None
 
-    if str(config.get("source", "unknown")) == "synthetic":
+    # 1. State: Cache check (unless force_rebuild is True)
+    if not force_rebuild:
+        cached = cached_manifest(processed)
+        if cached is not None and _matches_processing(cached, config):
+            return IngestState.READY_PROCESSED
+    stale = True
+
+    # 2. State: Synthetic fast path or Remote / Hugging Face download attempt
+    is_synthetic = str(config.get("source", "unknown")) == "synthetic"
+    if is_synthetic:
         state = IngestState.READY_RAW
     else:
+        # Check if remote repository download is configured and try it
+        download_cfg = config.get("download", {}) or {}
+        if download_cfg.get("hf_repo") or config.get("hf_repo"):
+            downloaded = fetch_remote_dataset(config, processed, name, token=token)
+            if downloaded:
+                cached = cached_manifest(processed)
+                if cached is not None:
+                    return IngestState.READY_PROCESSED
+
+        # 3. State: Fallback to Raw ingestion
         state = ingest_raw(config, root, name, token=token, force_processing=stale)
         if state is IngestState.READY_PROCESSED:
             return state
+
     if state is not IngestState.READY_RAW:
         raise DatasetError(DatasetErrorCode.INGEST_MANIFEST_MISMATCH, f"unexpected ingest state: {state}")
 
+    # 4. State: Execute Processor
     bundle = processor(raw, config)
-    _run_gates(bundle, extra_validator, min_length=int((config.get("processing", {}) or {}).get("min_length", MIN_LENGTH)))
+    _run_gates(
+        bundle,
+        extra_validator,
+        min_length=int((config.get("processing", {}) or {}).get("min_length", MIN_LENGTH)),
+    )
 
+    # 5. State: Split into Train, Val, Test disjoint subsets
     split_cfg = config.get("split", {}) or {}
     seed = int(split_cfg.get("seed", 42))
     train_frac = float(split_cfg.get("train_frac", 0.6))
     val_frac = float(split_cfg.get("val_frac", 0.2))
-    indices = replicate_split(len(bundle["features"]), seed=seed, train_frac=train_frac, val_frac=val_frac)
+    indices = replicate_split(
+        len(bundle["features"]),
+        seed=seed,
+        train_frac=train_frac,
+        val_frac=val_frac,
+    )
     counts = {k: int(len(v)) for k, v in indices.items()}
 
-    normalization = _fit_normalization(bundle, indices["train"], config)
+    # 6. State: Fit normalization strictly on Train, apply to all splits
+    normalization, split_bundles = _slice_and_normalize(bundle, indices, config)
 
+    # 7. State: Write Split NPZ files and Split Manifests atomically
     processed.mkdir(parents=True, exist_ok=True)
-    arrays_path = processed / ARRAYS_FILE
-    _write_arrays_atomic(arrays_path, bundle)
+    written_paths: list[Path] = []
+    splits_meta: dict[str, Any] = {}
 
-    manifest = _build_manifest(config, bundle, indices, counts, normalization, arrays_path)
+    for split_name in ("train", "val", "test"):
+        idx_arr = indices.get(split_name)
+        if idx_arr is None or len(idx_arr) == 0:
+            continue
+        s_bundle = split_bundles[split_name]
+        split_dir = processed / split_name
+        split_dir.mkdir(parents=True, exist_ok=True)
+        split_npz = split_dir / f"{split_name}.npz"
+        _write_arrays_atomic(split_npz, s_bundle)
+        written_paths.append(split_npz)
+
+        s_manifest = {
+            "split": split_name,
+            "n_trajectories": int(len(s_bundle["features"])),
+            "n_signal": int(np.asarray(s_bundle["is_positive"]).sum()),
+            "n_null": int((~np.asarray(s_bundle["is_positive"], dtype=bool)).sum()),
+            "file": f"{split_name}.npz",
+        }
+        write_manifest(split_dir / "manifest.json", {
+            "schema_version": "1.0",
+            "dataset": {"name": name},
+            "split": s_manifest,
+            "gates": {"passed": ["nonfinite", "min_length", "split_balance"]},
+            "processing": dict(config.get("processing", {}) or {}),
+            "content_hash": content_hash([split_npz], s_manifest),
+        })
+        splits_meta[split_name] = s_manifest
+
+    # Write root manifest
+    manifest = _build_root_manifest(config, bundle, indices, counts, normalization, splits_meta, written_paths)
     write_manifest(processed / "manifest.json", manifest)
     return IngestState.READY_PROCESSED
 
@@ -203,12 +210,7 @@ def _run_gates(
     extra_validator: Callable[[dict[str, Any]], None] | None,
     min_length: int = MIN_LENGTH,
 ) -> None:
-    """§5.4 mandatory gates; dataset-specific gates run via the hook.
-
-    ``min_length`` (R0.4) defaults to the DFA gate but can be lowered by
-    the dataset's ``processing.min_length`` for real datasets whose
-    trajectory lengths legitimately fall below 100 steps (the DFA method
-    is in that case simply not included in the run)."""
+    """Mandatory quality gates."""
     features = np.asarray(bundle.get("features"))
     seq_lengths = np.asarray(bundle.get("seq_lengths"), dtype=np.int64)
     is_positive = np.asarray(bundle.get("is_positive"), dtype=bool)
@@ -238,42 +240,59 @@ def _run_gates(
         extra_validator(bundle)
 
 
-def _fit_normalization(bundle: dict[str, Any], train_idx: np.ndarray, config: dict[str, Any]) -> dict[str, Any]:
-    """Leak-free per-channel z-score: statistics fit on train only.
-
-    Policy is per-dataset (recorded in the manifest): ``none`` leaves
-    features untouched (default; keeps the registry's synthetic fast
-    path and the indicators' own detrending bit-for-bit identical);
-    ``zscore`` standardizes each channel with train-only statistics.
-    """
+def _slice_and_normalize(
+    bundle: dict[str, Any],
+    indices: dict[str, np.ndarray],
+    config: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    """Slice bundle into splits and apply leak-free normalization fitted on train only."""
     policy = str((config.get("processing", {}) or {}).get("normalization", "none"))
     if policy not in {"none", "zscore"}:
         raise DatasetError(DatasetErrorCode.MANIFEST_CORRUPT, f"unsupported normalization policy: {policy!r}")
+
+    # Slice raw splits
+    splits: dict[str, dict[str, Any]] = {}
+    for part, idx in indices.items():
+        if len(idx) == 0:
+            continue
+        splits[part] = {
+            "features": np.asarray(bundle["features"])[idx].copy(),
+            "seq_lengths": np.asarray(bundle["seq_lengths"], dtype=np.int64)[idx].copy(),
+            "bifurcation_times": np.asarray(bundle["bifurcation_times"], dtype=np.float64)[idx].copy(),
+            "is_positive": np.asarray(bundle["is_positive"], dtype=bool)[idx].copy(),
+        }
+
     if policy == "none":
-        return {"fit_on_train": True, "policy": "none", "params": None}
-    features = np.asarray(bundle["features"])
-    train = features[train_idx]
-    valid = np.asarray(bundle["seq_lengths"], dtype=np.int64)
-    mask = np.zeros_like(train, dtype=bool)
-    for i, length in enumerate(train_idx):
-        mask[i, : int(valid[length]), :] = True
-    flat = train[mask]
+        return {"fit_on_train": True, "policy": "none", "params": None}, splits
+
+    # Z-score: Fit statistics strictly on train
+    train_feats = splits["train"]["features"]
+    train_lengths = splits["train"]["seq_lengths"]
+    mask = np.zeros_like(train_feats, dtype=bool)
+    for i, l_val in enumerate(train_lengths):
+        mask[i, : int(l_val), :] = True
+    flat = train_feats[mask]
     if flat.size == 0:
         raise DatasetError(DatasetErrorCode.PROCESS_SHORT_LENGTH, "empty train split for normalization")
+
     mean = np.nanmean(flat, axis=0)
     std = np.nanstd(flat, axis=0)
     std = np.where(std > 1e-12, std, 1.0)
-    normalized = (features - mean[None, None, :]) / std[None, None, :]
-    bundle["features"] = normalized.astype(np.float32)
-    return {
+
+    # Standardize all splits
+    for part in splits:
+        feats = splits[part]["features"]
+        splits[part]["features"] = ((feats - mean[None, None, :]) / std[None, None, :]).astype(np.float32)
+
+    normalization_meta = {
         "fit_on_train": True,
         "policy": "zscore",
         "params": {"mean": [float(v) for v in mean], "std": [float(v) for v in std]},
     }
+    return normalization_meta, splits
 
 
 def _write_arrays_atomic(path: Path, bundle: dict[str, Any]) -> None:
-
     payload = {key: np.asarray(bundle[key]) for key in _BUNDLE_KEYS}
     tmp = path.with_suffix(".npz.tmp")
     with open(tmp, "wb") as handle:
@@ -281,13 +300,14 @@ def _write_arrays_atomic(path: Path, bundle: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
-def _build_manifest(
+def _build_root_manifest(
     config: dict[str, Any],
     bundle: dict[str, Any],
     indices: dict[str, np.ndarray],
     counts: dict[str, int],
     normalization: dict[str, Any],
-    arrays_path: Path,
+    splits_meta: dict[str, Any],
+    split_paths: list[Path],
 ) -> dict[str, Any]:
     files = [
         {"path": str(spec["path"]), "md5": str(spec["md5"])}
@@ -296,17 +316,18 @@ def _build_manifest(
     processing_params = dict(config.get("processing", {}) or {})
     processing_params.setdefault("min_length", MIN_LENGTH)
     if str(config.get("source", "unknown")) == "synthetic":
-        for key in ("generator", "difficulty", "n_trajectories", "max_length",
-                    "seed", "null_seed", "noise_scale", "obs_noise_scale", "null"):
+        for key in (
+            "generator", "difficulty", "n_trajectories", "max_length",
+            "seed", "null_seed", "noise_scale", "obs_noise_scale", "null",
+        ):
             if key in config:
                 processing_params.setdefault(key, config[key])
-    # Effective (derived) processing provenance from the processor — e.g.
-    # auto-selected channels, README annotations. Recorded separately so
-    # ``_matches_processing`` compares only the user-controlled keys.
+
     effective_processing = (bundle.get("meta") or {}).get("processing", {}) or {}
     manifest: dict[str, Any] = {
         "schema_version": "1.0",
         "dataset": {
+            "name": config.get("name"),
             "doi": config.get("doi"),
             "version_id": config.get("version_id"),
             "files": files,
@@ -316,7 +337,6 @@ def _build_manifest(
             "source": config.get("source", "unknown"),
             "n_trajectories": int(len(bundle["features"])),
         },
-        "arrays_file": ARRAYS_FILE,
         "processing": {
             "git_sha": _git_sha(),
             "params": processing_params,
@@ -339,9 +359,13 @@ def _build_manifest(
             "seed": int(config.get("split", {}).get("seed", 42)),
             "counts": counts,
             "indices": {k: [int(v) for v in idx] for k, idx in indices.items()},
+            "splits": splits_meta,
         },
         "normalization": normalization,
-        "content_hash": content_hash(arrays_path, {"processing": processing_params, "split": counts, "normalization": normalization}),
+        "content_hash": content_hash(
+            split_paths,
+            {"processing": processing_params, "split": counts, "normalization": normalization},
+        ),
     }
     return manifest
 

@@ -100,14 +100,14 @@ def resolve_run_dir(
         for run in _iter_runs_newest_first(parent):
             if not _is_completed(run):
                 continue
-            # Check results or timings or config for seed match
+            # Check timings.json for seed match
             timings = _read_json(run / "times" / "timings.json")
             if timings:
                 entries = timings.get("entries", {})
-                seed_matches = any(f"s{seed}" in k for k in entries.keys())
-                if seed_matches:
+                if any(f"s{seed}" in k for k in entries.keys()):
                     return run
-            # Check results.jsonl
+
+            # Check results.jsonl for seed match
             res_file = run / "results" / "results.jsonl"
             if res_file.is_file():
                 try:
@@ -118,8 +118,28 @@ def resolve_run_dir(
                                 return run
                 except (OSError, json.JSONDecodeError):
                     pass
-            # Fallback: if single completed run in folder
-            return run
+
+            # Check checkpoints in artifacts/checkpoints for seed match
+            ckpt_dir = run / "artifacts" / "checkpoints"
+            if ckpt_dir.is_dir():
+                ckpts = list(ckpt_dir.glob("*.ckpt")) + list(ckpt_dir.glob("*.pt"))
+                if any(f"seed{seed}" in c.name or f"s{seed}" in c.name for c in ckpts):
+                    return run
+
+            # Check resolved_config/resolved.yaml for seed_offset
+            cfg_file = run / "resolved_config" / "resolved.yaml"
+            if cfg_file.is_file():
+                try:
+                    for line in cfg_file.read_text(encoding="utf-8").splitlines():
+                        if line.strip().startswith("seed_offset:") and line.split(":", 1)[1].strip() == str(seed):
+                            return run
+                except OSError:
+                    pass
+
+            # Fallback only when parent directory contains exactly one completed run
+            completed_runs = [r for r in parent.iterdir() if r.is_dir() and _is_completed(r)]
+            if len(completed_runs) == 1:
+                return run
 
     raise CheckpointError(
         f"No completed run directory found under {outputs_base} for dataset {dataset_name} seed {seed}."

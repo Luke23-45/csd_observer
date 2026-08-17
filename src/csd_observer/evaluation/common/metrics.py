@@ -91,25 +91,30 @@ def compute_early_warning_auc(
     for i in range(len(scores_signal)):
         tau = float(bif_times_signal[i])
         T = int(seq_lens_signal[i])
-        if is_pos_signal[i] and tau > 0:
+        if is_pos_signal[i] and tau > 0 and T > 0:
             t_start = max(0, int(tau - early_start_delta))
-            t_end = max(0, int(tau - early_end_delta))
-            window = scores_signal[i, t_start:t_end]
-            if len(window) > 0:
+            t_end = min(max(0, int(tau - early_end_delta)), int(tau), T)
+            if t_end > t_start:
+                window = scores_signal[i, t_start:t_end]
                 scores.append(float(np.max(window)))
                 labels.append(1)
     for i in range(len(scores_null)):
         T = int(seq_lens_null[i])
         if T > 0:
             t_start = max(0, int(T - early_start_delta))
-            t_end = max(0, int(T - early_end_delta))
-            window = scores_null[i, t_start:t_end]
-            if len(window) > 0:
+            t_end = min(max(0, int(T - early_end_delta)), T)
+            if t_end > t_start:
+                window = scores_null[i, t_start:t_end]
                 scores.append(float(np.max(window)))
                 labels.append(0)
     if len(set(labels)) < 2:
         return float("nan")
-    return float(roc_auc_score(labels, scores))
+    try:
+        if len(set(scores)) < 2:
+            return 0.5
+        return float(roc_auc_score(labels, scores))
+    except ValueError:
+        return float("nan")
 
 
 def compute_false_positive_rate(

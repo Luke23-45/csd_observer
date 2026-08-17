@@ -304,25 +304,31 @@ def compute_persistent_ew_auc(
     labels: list[int] = []
     for i in range(len(stream_sig)):
         tau = float(bif_times_signal[i])
-        if is_pos_signal[i] and tau > 0:
+        L_sig = int(seq_lens_signal[i])
+        if is_pos_signal[i] and tau > 0 and L_sig > 0:
             t_start = max(0, int(tau - early_start_delta))
-            t_end = max(0, int(tau - early_end_delta))
-            window = stream_sig[i, t_start:t_end]
-            if len(window) > 0:
+            t_end = min(max(0, int(tau - early_end_delta)), int(tau), L_sig)
+            if t_end > t_start:
+                window = stream_sig[i, t_start:t_end]
                 vals.extend(window.astype(np.float64).tolist())
                 labels.extend([1] * len(window))
     for i in range(len(stream_null)):
         T = int(seq_lens_null[i])
         if T > 0:
             t_start = max(0, int(T - early_start_delta))
-            t_end = max(0, int(T - early_end_delta))
-            window = stream_null[i, t_start:t_end]
-            if len(window) > 0:
+            t_end = min(max(0, int(T - early_end_delta)), T)
+            if t_end > t_start:
+                window = stream_null[i, t_start:t_end]
                 vals.extend(window.astype(np.float64).tolist())
                 labels.extend([0] * len(window))
     if len(set(labels)) < 2:
         return float("nan")
-    return float(roc_auc_score(labels, vals))
+    try:
+        if len(set(vals)) < 2:
+            return 0.5
+        return float(roc_auc_score(labels, vals))
+    except ValueError:
+        return float("nan")
 
 
 def null_anchor_upper_bound(

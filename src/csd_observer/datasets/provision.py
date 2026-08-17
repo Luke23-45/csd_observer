@@ -1,16 +1,9 @@
-"""Provisioning: turn a verified raw dataset into a processed bundle (§5.4–5.6).
+"""Provisioning: turn a verified raw dataset into a processed bundle.
 
 ``provision_dataset`` is the orchestration entry point: it runs the
 dataset-agnostic pipeline (ingest -> processor -> gates -> split ->
 normalization -> manifest) for the real datasets and short-circuits to
-``READY_PROCESSED`` for synthetic (the registry fast path builds those
-in memory; nothing needs materializing).
-
-Every real dataset has exactly one processor handle plus an annotation
-spot-check validator (§5.4 gate 3). The processor table is the single
-place where dataset name -> processor wiring lives; the registry's
-``list_datasets`` reports these names so configuration validation accepts
-them before the first provisioning.
+``READY_PROCESSED`` for synthetic.
 """
 
 from __future__ import annotations
@@ -32,7 +25,7 @@ def _processor(name: str):
         from csd_observer.datasets.tac.process import validate_annotation as _tac_validate
 
         return _tac_process, _tac_validate
-    if name == "daphnia_ext":
+    if name in ("daphnia_ext", "daphnia"):
         from csd_observer.datasets.daphnia_ext.process import process as _daphnia_process
         from csd_observer.datasets.daphnia_ext.process import (
             validate_annotation as _daphnia_validate,
@@ -48,26 +41,24 @@ def provision_dataset(
     root: str | Path = "datasets",
     *,
     token: str | None = None,
+    force_rebuild: bool = False,
 ) -> IngestState:
     """Ensure ``<root>/processed/<name>`` exists and is current; idempotent.
 
     Args:
         name: dataset name (``tac``, ``daphnia_ext``, or a synthetic
             name, which short-circuits without touching disk).
-        config: the composed dataset-group config (``expected_files``,
-            ``download``, ``doi``, ``processing``, ``split``, ...).
-        root: data root (default ``datasets``; the pipeline appends
-            ``raw/<name>`` and ``processed/<name>``). Pass the run's
-            ``data_root`` override.
+        config: the composed dataset-group config.
+        root: data root (default ``datasets``).
         token: optional Dryad API token for auto download mode.
+        force_rebuild: force re-running raw processing even if cache is present.
 
     Returns:
-        the reached :class:`IngestState` (``READY_PROCESSED`` when the
-        processed manifest is valid and matches the config).
+        the reached :class:`IngestState`.
     """
     if str(config.get("source", "synthetic")) == "synthetic":
         return IngestState.READY_PROCESSED
-    if name not in REAL_DATASETS:
+    if name not in REAL_DATASETS and name != "daphnia":
         raise DatasetError(DatasetErrorCode.INGEST_MANIFEST_MISMATCH, f"no processor for dataset {name!r}")
     processor, validator = _processor(name)
     return run_pipeline(
@@ -77,6 +68,7 @@ def provision_dataset(
         processor,
         token=token,
         extra_validator=validator,
+        force_rebuild=force_rebuild,
     )
 
 

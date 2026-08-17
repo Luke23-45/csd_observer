@@ -294,7 +294,7 @@ def validate_config(config: dict[str, Any]) -> None:
     # is bypassed: real datasets with ``min_length < 100`` (daphnia) would
     # otherwise silently train with a saturated label window. Indicators
     # never consume ``label_window``, so only learned-method runs check it.
-    if learned and training_enabled:
+    if learned_methods and training_enabled:
         label_window = (training or {}).get("label_window") if isinstance(training, dict) else None
         if label_window is not None and effective_min_length is not None and int(label_window) > effective_min_length:
             raise ValueError(

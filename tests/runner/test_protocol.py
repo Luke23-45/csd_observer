@@ -32,7 +32,7 @@ def _sample_raw_protocol() -> dict:
                 "model": "default",
                 "data": "synthetic_fold",
                 "stages": [],
-                "evaluate": true if "true" in dir() else True,
+                "evaluate": True,
                 "evaluate_mode": "persistenceaware",
             },
             {
