@@ -1,0 +1,229 @@
+{
+  "name": "synthetic_matrix",
+  "task": "SyntheticCSD",
+  "description": "Full synthetic benchmark across Fold, Hopf, and Logistic bifurcations",
+  "seeds": [0, 1, 2],
+  "defaults": [],
+  "methods": [
+    {
+      "index": 1,
+      "name": "VAR-CSD",
+      "task": "fold",
+      "role": "indicator_baseline",
+      "model": "default",
+      "data": "synthetic_fold",
+      "stages": [],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 2,
+      "name": "AC1-CSD",
+      "task": "fold",
+      "role": "indicator_baseline",
+      "model": "default",
+      "data": "synthetic_fold",
+      "stages": [],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 3,
+      "name": "SKEW-CSD",
+      "task": "fold",
+      "role": "indicator_baseline",
+      "model": "default",
+      "data": "synthetic_fold",
+      "stages": [],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 4,
+      "name": "SRATIO-CSD",
+      "task": "fold",
+      "role": "indicator_baseline",
+      "model": "default",
+      "data": "synthetic_fold",
+      "stages": [],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 5,
+      "name": "RETRATE-CSD",
+      "task": "fold",
+      "role": "indicator_baseline",
+      "model": "default",
+      "data": "synthetic_fold",
+      "stages": [],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 6,
+      "name": "DFA-CSD",
+      "task": "fold",
+      "role": "indicator_baseline",
+      "model": "default",
+      "data": "synthetic_fold",
+      "stages": [],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 7,
+      "name": "DMD-CSD",
+      "task": "fold",
+      "role": "indicator_baseline",
+      "model": "default",
+      "data": "synthetic_fold",
+      "stages": [],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 8,
+      "name": "LSTM-AlarmNet",
+      "task": "fold",
+      "role": "neural_observer",
+      "model": "lstm",
+      "data": "synthetic_fold",
+      "stages": [1],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 9,
+      "name": "TCN-AlarmNet",
+      "task": "fold",
+      "role": "neural_observer",
+      "model": "tcn",
+      "data": "synthetic_fold",
+      "stages": [1],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 10,
+      "name": "PatchTST-AlarmNet",
+      "task": "fold",
+      "role": "neural_observer",
+      "model": "patchtst",
+      "data": "synthetic_fold",
+      "stages": [1],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 11,
+      "name": "VAR-CSD",
+      "task": "hopf",
+      "role": "indicator_baseline",
+      "model": "default",
+      "data": "synthetic_hopf",
+      "stages": [],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 12,
+      "name": "AC1-CSD",
+      "task": "hopf",
+      "role": "indicator_baseline",
+      "model": "default",
+      "data": "synthetic_hopf",
+      "stages": [],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 13,
+      "name": "LSTM-AlarmNet",
+      "task": "hopf",
+      "role": "neural_observer",
+      "model": "lstm",
+      "data": "synthetic_hopf",
+      "stages": [1],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 14,
+      "name": "TCN-AlarmNet",
+      "task": "hopf",
+      "role": "neural_observer",
+      "model": "tcn",
+      "data": "synthetic_hopf",
+      "stages": [1],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 15,
+      "name": "PatchTST-AlarmNet",
+      "task": "hopf",
+      "role": "neural_observer",
+      "model": "patchtst",
+      "data": "synthetic_hopf",
+      "stages": [1],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 16,
+      "name": "VAR-CSD",
+      "task": "logistic",
+      "role": "indicator_baseline",
+      "model": "default",
+      "data": "synthetic_logistic",
+      "stages": [],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 17,
+      "name": "AC1-CSD",
+      "task": "logistic",
+      "role": "indicator_baseline",
+      "model": "default",
+      "data": "synthetic_logistic",
+      "stages": [],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 18,
+      "name": "LSTM-AlarmNet",
+      "task": "logistic",
+      "role": "neural_observer",
+      "model": "lstm",
+      "data": "synthetic_logistic",
+      "stages": [1],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 19,
+      "name": "TCN-AlarmNet",
+      "task": "logistic",
+      "role": "neural_observer",
+      "model": "tcn",
+      "data": "synthetic_logistic",
+      "stages": [1],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 20,
+      "name": "PatchTST-AlarmNet",
+      "task": "logistic",
+      "role": "neural_observer",
+      "model": "patchtst",
+      "data": "synthetic_logistic",
+      "stages": [1],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    }
+  ]
+}

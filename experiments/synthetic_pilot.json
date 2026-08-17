@@ -1,0 +1,44 @@
+{
+  "name": "synthetic_pilot",
+  "task": "SyntheticFold",
+  "description": "Pilot synthetic sweep for quick verification and smoke tests",
+  "seeds": [0],
+  "defaults": [
+    "+dataset_overrides.n_trajectories=16",
+    "+dataset_overrides.max_length=128",
+    "training.epochs=2",
+    "training.patience=2"
+  ],
+  "methods": [
+    {
+      "index": 1,
+      "name": "VAR-CSD",
+      "role": "indicator_baseline",
+      "model": "default",
+      "data": "synthetic_fold",
+      "stages": [],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 2,
+      "name": "AC1-CSD",
+      "role": "indicator_baseline",
+      "model": "default",
+      "data": "synthetic_fold",
+      "stages": [],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 3,
+      "name": "LSTM-AlarmNet",
+      "role": "neural_observer",
+      "model": "lstm",
+      "data": "synthetic_fold",
+      "stages": [1],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    }
+  ]
+}

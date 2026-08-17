@@ -33,6 +33,7 @@ dev = [
 
 [project.scripts]
 csd-observer = "csd_observer.cli.main:main"
+csd-sweep = "csd_observer.runner.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/csd_observer"]

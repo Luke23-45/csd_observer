@@ -55,11 +55,14 @@ def train_method(
     """
     if not method.meta.is_learned:
         return config
-    if not training.get("enabled", True):
-        raise ValueError(
-            f"method {method.meta.name!r} is learned but training is disabled"
-        )
     key = method.meta.config_path[0]
+    model_cfg = dict(config.get("model", {}).get(key, {}) or {})
+    if not training.get("enabled", True):
+        if model_cfg.get("checkpoint"):
+            return config
+        raise ValueError(
+            f"method {method.meta.name!r} is learned but training is disabled and no checkpoint is provided"
+        )
     lit_cls = get_lit_module(method.meta.name)
     if lit_cls is None:
         raise ValueError(f"no Lightning module registered for method {method.meta.name!r}")

@@ -211,12 +211,21 @@ def validate_config(config: dict[str, Any]) -> None:
         training_enabled = training != "none"
     else:
         training_enabled = bool((training or {}).get("enabled", True))
-    learned = any(families.get(m, "") in _LEARNED_FAMILIES for m in methods)
-    if learned and not training_enabled:
-        raise ValueError(
-            f"learned method(s) {[m for m in methods if families.get(m) in _LEARNED_FAMILIES]} "
-            "require a training configuration (training.enabled=true)"
-        )
+    learned_methods = [m for m in methods if families.get(m, "") in _LEARNED_FAMILIES]
+    if learned_methods and not training_enabled:
+        model_block = config.get("model", {})
+        missing_ckpts = []
+        for m in learned_methods:
+            from csd_observer.models.common.registry import get_method
+            method_obj = get_method(m)
+            key = method_obj.meta.config_path[0]
+            if not isinstance(model_block, dict) or not model_block.get(key, {}).get("checkpoint"):
+                missing_ckpts.append(m)
+        if missing_ckpts:
+            raise ValueError(
+                f"learned method(s) {missing_ckpts} require a training configuration "
+                "(training.enabled=true) or a pre-trained checkpoint (model.<key>.checkpoint=<path>)"
+            )
 
     # ---- §10.3: evaluation knobs ----
     evaluation = config.get("evaluation", {})

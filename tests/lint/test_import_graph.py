@@ -27,7 +27,7 @@ import pytest
 _SRC = Path(__file__).resolve().parent.parent.parent / "src" / "csd_observer"
 
 _LAYERS = ("cli", "config", "datasets", "evaluation", "models",
-           "orchestration", "outputs", "training")
+           "orchestration", "outputs", "runner", "training")
 
 #: allowed directed edges between top-level layers
 _ALLOWED_EDGES = {

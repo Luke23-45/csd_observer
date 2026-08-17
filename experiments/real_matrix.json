@@ -1,0 +1,86 @@
+{
+  "name": "real_matrix",
+  "task": "RealCSD",
+  "description": "Empirical benchmark across TAC thermoacoustic combustor and Daphnia extinction datasets",
+  "seeds": [0],
+  "defaults": [],
+  "methods": [
+    {
+      "index": 1,
+      "name": "VAR-CSD",
+      "task": "tac",
+      "role": "indicator_baseline",
+      "model": "default",
+      "data": "tac",
+      "stages": [],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 2,
+      "name": "AC1-CSD",
+      "task": "tac",
+      "role": "indicator_baseline",
+      "model": "default",
+      "data": "tac",
+      "stages": [],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 3,
+      "name": "DMD-CSD",
+      "task": "tac",
+      "role": "indicator_baseline",
+      "model": "default",
+      "data": "tac",
+      "stages": [],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 4,
+      "name": "LSTM-AlarmNet",
+      "task": "tac",
+      "role": "neural_observer",
+      "model": "lstm",
+      "data": "tac",
+      "stages": [1],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 5,
+      "name": "VAR-CSD",
+      "task": "daphnia_ext",
+      "role": "indicator_baseline",
+      "model": "default",
+      "data": "daphnia_ext",
+      "stages": [],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 6,
+      "name": "AC1-CSD",
+      "task": "daphnia_ext",
+      "role": "indicator_baseline",
+      "model": "default",
+      "data": "daphnia_ext",
+      "stages": [],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    },
+    {
+      "index": 7,
+      "name": "LSTM-AlarmNet",
+      "task": "daphnia_ext",
+      "role": "neural_observer",
+      "model": "lstm",
+      "data": "daphnia_ext",
+      "stages": [1],
+      "evaluate": true,
+      "evaluate_mode": "persistenceaware"
+    }
+  ]
+}
