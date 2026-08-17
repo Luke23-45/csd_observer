@@ -63,17 +63,36 @@ def expected_files(config: dict[str, Any]) -> list[dict[str, Any]]:
     return files
 
 
-def ingest_raw(config: dict[str, Any], root: str | Path, *, token: str | None = None) -> IngestState:
-    """Resolve a dataset into ``root/raw``; never accepts an unchecked file."""
+def ingest_raw(
+    config: dict[str, Any],
+    root: str | Path,
+    name: str,
+    *,
+    token: str | None = None,
+    force_processing: bool = False,
+) -> IngestState:
+    """Resolve a dataset into ``<root>/raw/<dir(name)>``; never accepts an unchecked file.
+
+    ``root`` is the data root (e.g. ``datasets``); per-dataset paths are
+    derived via the :func:`pipeline.data_dir` mapping so the on-disk
+    layout is ``<root>/raw/<name>`` and ``<root>/processed/<name>``.
+
+    ``force_processing`` bypasses the cached-manifest short-circuit: the
+    caller (:func:`pipeline.run_pipeline`) already determined the cached
+    bundle is stale, so a re-process must not be swallowed by an
+    unrelated existing manifest.
+    """
+    from .pipeline import data_dir
+
     root = Path(root)
-    raw = root / "raw"
-    processed = root / "processed"
+    raw = root / "raw" / data_dir(name)
+    processed = root / "processed" / data_dir(name)
     raw.mkdir(parents=True, exist_ok=True)
-    lock = FileLock(str(root / ".ingest.lock"))
+    lock = FileLock(str(root / f".ingest.{data_dir(name)}.lock"))
     with lock:
         # Second cache check inside the lock: a concurrent process may have
         # populated the manifest while we were waiting.
-        if cached_manifest(processed) is not None:
+        if not force_processing and cached_manifest(processed) is not None:
             return IngestState.READY_PROCESSED
         files = expected_files(config)
         mode = str(config.get("download", {}).get("mode", "manual"))
@@ -87,13 +106,13 @@ def ingest_raw(config: dict[str, Any], root: str | Path, *, token: str | None = 
                 raise DatasetError(DatasetErrorCode.INGEST_AUTH, "auto mode requires a Dryad API token")
             remote = {f.path: f for f in client.files_for_doi(str(config["doi"]))}
             for spec in files:
-                name = str(spec["path"])
-                if name not in remote:
-                    raise DatasetError(DatasetErrorCode.INGEST_MANIFEST_MISMATCH, f"remote file missing: {name}")
-                destination = raw / name
+                fname = str(spec["path"])
+                if fname not in remote:
+                    raise DatasetError(DatasetErrorCode.INGEST_MANIFEST_MISMATCH, f"remote file missing: {fname}")
+                destination = raw / fname
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 if not destination.exists() or _digest(destination) != str(spec["md5"]).lower():
-                    client.download(remote[name], str(destination))
+                    client.download(remote[fname], str(destination))
                 try:
                     verify_md5(destination, str(spec["md5"]))
                 except DatasetError:
@@ -111,18 +130,25 @@ def _manual_drop(config: dict[str, Any], files: list[dict[str, Any]], raw: Path)
     run log and stdout). READY_RAW only on match; a timeout raises
     ``INGEST_CHECKSUM`` listing the still-missing files. Bad files are
     quarantined instead of silently re-validated.
+
+    Entries whose ``md5`` is empty are treated as directory presence
+    checks (the extracted raw layout places files under a named
+    directory rather than inside a downloadable archive).
     """
     expected = {str(spec["path"]): str(spec["md5"]) for spec in files}
-    missing = [name for name in expected if not (raw / name).exists()]
+    missing = [name for name, md5 in expected.items() if not (raw / name).exists()]
     if missing:
         instructions = {
             "directory": str(raw),
             "expected": [{"path": name, "md5": md5} for name, md5 in expected.items()],
         }
         _emit("manual_drop_required", **instructions)
-        print(f"[ingest] manual mode: drop the following files into {raw}:")
+        print(f"[ingest] manual mode: drop the following files/dirs into {raw}:")
         for name, md5 in expected.items():
-            print(f"  {name}  (md5 {md5})")
+            if md5:
+                print(f"  {name}  (md5 {md5})")
+            else:
+                print(f"  {name}  (directory)")
     wait_minutes = float(config.get("download", {}).get("wait_minutes", 0.0))
     if missing and wait_minutes > 0:
         interval = float(config.get("download", {}).get("poll_interval_sec", 2.0))
@@ -136,10 +162,13 @@ def _manual_drop(config: dict[str, Any], files: list[dict[str, Any]], raw: Path)
             f"manual files not found (pinned md5s above): {', '.join(missing)}",
         )
     for name, md5 in expected.items():
+        target = raw / name
+        if not md5:
+            continue  # directory entry: presence already verified
         try:
-            verify_md5(raw / name, md5)
+            verify_md5(target, md5)
         except DatasetError:
-            _quarantine(raw / name)
+            _quarantine(target)
             raise
 
 

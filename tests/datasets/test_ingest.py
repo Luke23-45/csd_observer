@@ -14,6 +14,9 @@ from tests.datasets import _fixtures
 
 PAYLOAD = b"fake dryad archive bytes for checksum verification"
 
+NAME = "tac"
+RAW_DIR = Path("raw") / "tac"
+
 
 def _md5(data: bytes) -> str:
     return hashlib.md5(data).hexdigest()
@@ -21,7 +24,7 @@ def _md5(data: bytes) -> str:
 
 def _ingest_config(*, mode: str, md5: str, wait_minutes: float = 0.0) -> dict:
     return {
-        "name": "tac",
+        "name": NAME,
         "source": "dryad",
         "doi": "10.5061/dryad.4cj4k",
         "expected_files": [{"path": "Experimental_time_traces_tdms.zip", "md5": md5}],
@@ -60,9 +63,9 @@ def test_ingest_auto_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 
     _fake_dryad_client(monkeypatch, PAYLOAD)
     monkeypatch.setenv("DRYAD_API_TOKEN", "tok")
-    state = ingest_raw(_ingest_config(mode="auto", md5=_md5(PAYLOAD)), tmp_path)
+    state = ingest_raw(_ingest_config(mode="auto", md5=_md5(PAYLOAD)), tmp_path, NAME)
     assert state is IngestState.READY_RAW
-    raw_file = tmp_path / "raw" / "Experimental_time_traces_tdms.zip"
+    raw_file = tmp_path / RAW_DIR / "Experimental_time_traces_tdms.zip"
     assert raw_file.read_bytes() == PAYLOAD
 
 
@@ -72,9 +75,9 @@ def test_ingest_auto_checksum_mismatch_quarantines(tmp_path: Path, monkeypatch: 
     _fake_dryad_client(monkeypatch, b"corrupted bytes")
     monkeypatch.setenv("DRYAD_API_TOKEN", "tok")
     with pytest.raises(DatasetError) as exc_info:
-        ingest_raw(_ingest_config(mode="auto", md5=_md5(PAYLOAD)), tmp_path)
+        ingest_raw(_ingest_config(mode="auto", md5=_md5(PAYLOAD)), tmp_path, NAME)
     assert exc_info.value.code == DatasetErrorCode.INGEST_CHECKSUM
-    raw = tmp_path / "raw"
+    raw = tmp_path / RAW_DIR
     quarantined = list(raw.glob("*.bad-*"))
     assert len(quarantined) == 1
     assert not (raw / "Experimental_time_traces_tdms.zip").exists()
@@ -85,17 +88,17 @@ def test_ingest_auto_requires_token(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
     monkeypatch.delenv("DRYAD_API_TOKEN", raising=False)
     with pytest.raises(DatasetError) as exc_info:
-        ingest_raw(_ingest_config(mode="auto", md5=_md5(PAYLOAD)), tmp_path)
+        ingest_raw(_ingest_config(mode="auto", md5=_md5(PAYLOAD)), tmp_path, NAME)
     assert exc_info.value.code == DatasetErrorCode.INGEST_AUTH
 
 
 def test_ingest_manual_success(tmp_path: Path) -> None:
     from csd_observer.datasets.common.ingest import ingest_raw
 
-    raw = tmp_path / "raw"
+    raw = tmp_path / RAW_DIR
     raw.mkdir(parents=True, exist_ok=True)
     (raw / "Experimental_time_traces_tdms.zip").write_bytes(PAYLOAD)
-    state = ingest_raw(_ingest_config(mode="manual", md5=_md5(PAYLOAD)), tmp_path)
+    state = ingest_raw(_ingest_config(mode="manual", md5=_md5(PAYLOAD)), tmp_path, NAME)
     assert state is IngestState.READY_RAW
 
 
@@ -103,7 +106,7 @@ def test_ingest_manual_timeout(tmp_path: Path) -> None:
     from csd_observer.datasets.common.ingest import ingest_raw
 
     with pytest.raises(DatasetError) as exc_info:
-        ingest_raw(_ingest_config(mode="manual", md5=_md5(PAYLOAD), wait_minutes=0.01), tmp_path)
+        ingest_raw(_ingest_config(mode="manual", md5=_md5(PAYLOAD), wait_minutes=0.01), tmp_path, NAME)
     assert exc_info.value.code == DatasetErrorCode.INGEST_CHECKSUM
     assert "not found" in str(exc_info.value)
 
@@ -112,7 +115,7 @@ def test_ingest_manifest_skip_short_circuits(tmp_path: Path, monkeypatch: pytest
     from csd_observer.datasets.common.ingest import ingest_raw
     from csd_observer.datasets.common.manifest import write_manifest
 
-    processed = tmp_path / "processed"
+    processed = tmp_path / "processed" / "tac"
     write_manifest(processed / "manifest.json", {
         "schema_version": "1.0",
         "dataset": {"doi": "x"},
@@ -122,9 +125,9 @@ def test_ingest_manifest_skip_short_circuits(tmp_path: Path, monkeypatch: pytest
         "content_hash": "abc",
     })
     monkeypatch.setenv("DRYAD_API_TOKEN", "tok")
-    state = ingest_raw(_ingest_config(mode="auto", md5=_md5(PAYLOAD)), tmp_path)
+    state = ingest_raw(_ingest_config(mode="auto", md5=_md5(PAYLOAD)), tmp_path, NAME)
     assert state is IngestState.READY_PROCESSED
-    assert not (tmp_path / "raw" / "Experimental_time_traces_tdms.zip").exists()
+    assert not (tmp_path / RAW_DIR / "Experimental_time_traces_tdms.zip").exists()
 
 
 def test_ingest_lock_serializes_concurrent_runs(tmp_path: Path) -> None:
@@ -134,10 +137,10 @@ def test_ingest_lock_serializes_concurrent_runs(tmp_path: Path) -> None:
 
     from csd_observer.datasets.common.ingest import ingest_raw
 
-    raw = tmp_path / "raw"
+    raw = tmp_path / RAW_DIR
     raw.mkdir(parents=True, exist_ok=True)
     (raw / "Experimental_time_traces_tdms.zip").write_bytes(PAYLOAD)
-    lock = FileLock(str(tmp_path / ".ingest.lock"))
+    lock = FileLock(str(tmp_path / f".ingest.{NAME}.lock"))
     lock.acquire(timeout=1)
 
     result: list[IngestState] = []
@@ -145,7 +148,7 @@ def test_ingest_lock_serializes_concurrent_runs(tmp_path: Path) -> None:
 
     def worker() -> None:
         try:
-            result.append(ingest_raw(_ingest_config(mode="manual", md5=_md5(PAYLOAD)), tmp_path))
+            result.append(ingest_raw(_ingest_config(mode="manual", md5=_md5(PAYLOAD)), tmp_path, NAME))
         except BaseException as exc:  # noqa: BLE001 - test thread boundary
             errors.append(exc)
 
@@ -217,9 +220,10 @@ def test_provision_wires_processor_and_validator(tmp_path: Path, monkeypatch: py
 
     captured: dict = {}
 
-    def fake_run_pipeline(config, root, processor, *, token=None, extra_validator=None):
+    def fake_run_pipeline(config, root, name, processor, *, token=None, extra_validator=None):
         captured["config"] = config
         captured["root"] = root
+        captured["name"] = name
         captured["processor"] = processor
         captured["validator"] = extra_validator
         return IngestState.READY_PROCESSED
@@ -228,27 +232,28 @@ def test_provision_wires_processor_and_validator(tmp_path: Path, monkeypatch: py
     config = {"source": "dryad", "name": "tac"}
     state = provision_dataset("tac", config, root=tmp_path)
     assert state is IngestState.READY_PROCESSED
-    assert captured["root"] == tmp_path / "tac"
+    assert captured["root"] == tmp_path
+    assert captured["name"] == "tac"
     assert callable(captured["processor"])
     assert callable(captured["validator"])
 
 
 def test_provision_tac_end_to_end(tmp_path: Path) -> None:
-    """Full provisioning on a mocked archive: ingest (manual) -> process
-    -> gates -> manifest -> registry load."""
-    from csd_observer.datasets.common.checksum import md5_file
+    """Full provisioning on a mocked extracted raw dir: ingest (manual)
+    -> process -> gates -> manifest -> registry load."""
     from csd_observer.datasets.provision import provision_dataset
     from csd_observer.datasets.registry import get_dataset
 
-    archive = _fixtures.build_custom_tac_archive(tmp_path, n_stationary=3, n_ramp=4)
+    _fixtures.build_custom_tac_raw(tmp_path, n_stationary=3, n_ramp=4)
     config = _fixtures.tac_config(source="dryad")
-    config["expected_files"] = [{"path": "Experimental_time_traces_tdms.zip", "md5": md5_file(archive)}]
+    config["expected_files"] = [{"path": "Experimental_time_traces_tdms", "md5": ""}]
     config["download"] = {"mode": "manual", "wait_minutes": 0.0}
 
     root = tmp_path / "dataset"
-    dataset_raw = root / "tac" / "raw"
+    raw = tmp_path / RAW_DIR
+    dataset_raw = root / RAW_DIR
     dataset_raw.mkdir(parents=True, exist_ok=True)
-    archive.replace(dataset_raw / archive.name)
+    (raw / "Experimental_time_traces_tdms").replace(dataset_raw / "Experimental_time_traces_tdms")
 
     state = provision_dataset("tac", config, root=root)
     assert state is IngestState.READY_PROCESSED

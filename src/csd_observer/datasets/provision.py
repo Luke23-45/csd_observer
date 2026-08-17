@@ -45,19 +45,20 @@ def _processor(name: str):
 def provision_dataset(
     name: str,
     config: dict[str, Any],
-    root: str | Path = "final_data",
+    root: str | Path = "datasets",
     *,
     token: str | None = None,
 ) -> IngestState:
-    """Ensure ``root/<name>/processed`` exists and is current; idempotent.
+    """Ensure ``<root>/processed/<name>`` exists and is current; idempotent.
 
     Args:
         name: dataset name (``tac``, ``daphnia_ext``, or a synthetic
             name, which short-circuits without touching disk).
         config: the composed dataset-group config (``expected_files``,
             ``download``, ``doi``, ``processing``, ``split``, ...).
-        root: dataset root (default ``final_data``; the pipeline appends
-            ``<name>``). Pass the run's ``data_root`` override.
+        root: data root (default ``datasets``; the pipeline appends
+            ``raw/<name>`` and ``processed/<name>``). Pass the run's
+            ``data_root`` override.
         token: optional Dryad API token for auto download mode.
 
     Returns:
@@ -71,7 +72,8 @@ def provision_dataset(
     processor, validator = _processor(name)
     return run_pipeline(
         config,
-        Path(root) / name,
+        Path(root),
+        name,
         processor,
         token=token,
         extra_validator=validator,

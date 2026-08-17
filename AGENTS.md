@@ -87,6 +87,27 @@ the distinct name.
 - Feature modes are declared by the dataset (`DatasetConfig.feature_mode`:
   `channel_0` / `radial` / `envelope`), read by the indicator adapters
   (R2.2); the models package never infers the mode from the system name.
+- Real-dataset processing knobs go on `dataset.processing.*`, **not**
+  `+dataset_overrides.*` (the override whitelist is the synthetic-generator
+  channel only, R0.1). E.g. TAC chunking:
+  `dataset.processing.analysis_window=4096` changes how long traces are
+  split. `dataset_overrides.data_root` is the one override that also
+  applies to real data (where the processed bundles are read from).
+- TAC ramp sections: the transition onset is auto-detected from the
+  envelope (`ramp_onset_index: null`), and with `analysis_window` set each
+  ramp trace becomes ONE window aligned to its onset
+  (`[onset - ramp_pre_samples, onset + ramp_post_samples)`) so the
+  annotated `tau` hosts the early-warning window. `validate_config` rejects
+  an `early_start_delta` larger than `ramp_pre_samples`. Stationary traces
+  are chunked into fixed null windows (also why neural methods can train
+  on TAC at all — whole 600k-sample traces OOM an LSTM). Re-provision with
+  a changed processing block (or changed processor code) automatically via
+  the staleness guard in `datasets/common/pipeline.py`.
+- DaphniaExt trajectories are only ~27–60 samples, so the default
+  `training.label_window=60` would saturate the alarm signal. `validate_config`
+  now rejects `label_window > min dataset length` for learned-method runs
+  (independent of the `CSD_OBSERVER_SKIP_MIN_LENGTH_GATES` bypass); use
+  `training.label_window=10` (≤ `min_length=20`) for daphnia training.
 - Import layering is enforced by `tests/lint/test_import_graph.py`
   (R5.1): `models`/`datasets`/`outputs` import nothing inside the
   project; `orchestration` is the only layer importing `training`.

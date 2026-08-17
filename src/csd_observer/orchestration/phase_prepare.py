@@ -38,7 +38,7 @@ def prepare(ctx: RunContext) -> None:
         provision_dataset(
             ctx.dataset,
             ctx.dataset_cfg,
-            root=ctx.overrides.get("data_root", "final_data"),
+            root=ctx.overrides.get("data_root", "datasets"),
         )
 
     # ---- pre-loop bundle load: dataset meta + manifest hashes ----
@@ -94,9 +94,12 @@ def _manifest_hashes(
     keys; per-seed schedule values are deliberately excluded so the
     hash identifies the dataset, not the seed).
     """
+    from csd_observer.datasets.common.pipeline import data_dir
+
+    folder = data_dir(dataset)
     manifest_path = (
-        Path(str(overrides.get("data_root", "final_data")))
-        / dataset / "processed" / "manifest.json"
+        Path(str(overrides.get("data_root", "datasets")))
+        / "processed" / folder / "manifest.json"
     )
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

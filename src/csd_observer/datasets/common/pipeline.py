@@ -41,6 +41,32 @@ _BUNDLE_KEYS = ("features", "seq_lengths", "bifurcation_times", "is_positive")
 # without scanning the manifest for an ``arrays_file`` field.
 ARRAYS_FILE = "arrays.npz"
 
+# Registry name -> on-disk data directory name. A single source of truth so
+# the raw/ and processed/ folders on disk match the raw layout the user
+# placed under ``datasets/raw/`` (the registry name may differ).
+_DATA_DIR = {"daphnia_ext": "daphnia"}
+
+
+def data_dir(name: str) -> str:
+    """On-disk folder name for a dataset (defaults to the registry name)."""
+    return _DATA_DIR.get(str(name), str(name))
+
+
+def data_name(folder: str) -> str:
+    """Registry name for an on-disk folder (defaults to the folder name)."""
+    reverse = {v: k for k, v in _DATA_DIR.items()}
+    return reverse.get(str(folder), str(folder))
+
+
+def raw_dir(data_root: str | Path, name: str) -> Path:
+    """Per-dataset raw directory under the data root."""
+    return Path(data_root) / "raw" / data_dir(name)
+
+
+def processed_dir(data_root: str | Path, name: str) -> Path:
+    """Per-dataset processed directory under the data root."""
+    return Path(data_root) / "processed" / data_dir(name)
+
 
 def _matches_processing(manifest: dict[str, Any], config: dict[str, Any]) -> bool:
     """§13 staleness guard: a changed pipeline invalidates the cache.
@@ -49,7 +75,9 @@ def _matches_processing(manifest: dict[str, Any], config: dict[str, Any]) -> boo
     config (with ``min_length`` defaulted). Normalization policy is also
     considered (it lives at ``manifest.normalization``, not under
     ``processing``, but a change in policy still invalidates the cache
-    because it changes the on-disk array bytes).
+    because it changes the on-disk array bytes). The recorded ``git_sha``
+    must also match HEAD so a processor-code change invalidates the
+    cache (provisioning re-runs against the new implementation).
     """
     recorded = (manifest.get("processing", {}) or {}).get("params", {})
     current = dict(config.get("processing", {}) or {})
@@ -58,7 +86,10 @@ def _matches_processing(manifest: dict[str, Any], config: dict[str, Any]) -> boo
         return False
     recorded_norm = (manifest.get("normalization", {}) or {}).get("policy")
     current_norm = str((config.get("processing", {}) or {}).get("normalization", "none"))
-    return recorded_norm == current_norm
+    if recorded_norm != current_norm:
+        return False
+    recorded_sha = (manifest.get("processing", {}) or {}).get("git_sha")
+    return recorded_sha == _git_sha()
 
 
 def _git_sha() -> str:
@@ -103,6 +134,7 @@ def content_hash(arrays_path: Path, params: dict[str, Any]) -> str:
 def run_pipeline(
     config: dict[str, Any],
     root: str | Path,
+    name: str,
     processor: Callable[[Path, dict[str, Any]], dict[str, Any]],
     *,
     token: str | None = None,
@@ -117,23 +149,35 @@ def run_pipeline(
 
     ``source == "synthetic"`` skips raw ingestion entirely (no raw
     files exist); the processor builds the bundle from the generators.
+
+    ``root`` is the data root (e.g. ``datasets``); per-dataset raw and
+    processed directories are derived via :func:`raw_dir` /
+    :func:`processed_dir` so the layout is
+    ``<root>/raw/<name>`` and ``<root>/processed/<name>``.
     """
     root = Path(root)
-    processed = root / "processed"
+    raw = raw_dir(root, name)
+    processed = processed_dir(root, name)
     cached = cached_manifest(processed)
     if cached is not None and _matches_processing(cached, config):
         return IngestState.READY_PROCESSED
+    # A cached manifest that no longer matches forces re-processing:
+    # without this, ``ingest_raw``'s own short-circuit would return the
+    # stale bundle as READY_PROCESSED and the guard above would never
+    # trigger for real datasets (only ``source == "synthetic"`` paths,
+    # which skip raw ingestion, re-provisioned before this).
+    stale = cached is not None
 
     if str(config.get("source", "unknown")) == "synthetic":
         state = IngestState.READY_RAW
     else:
-        state = ingest_raw(config, root, token=token)
+        state = ingest_raw(config, root, name, token=token, force_processing=stale)
         if state is IngestState.READY_PROCESSED:
             return state
     if state is not IngestState.READY_RAW:
         raise DatasetError(DatasetErrorCode.INGEST_MANIFEST_MISMATCH, f"unexpected ingest state: {state}")
 
-    bundle = processor(root / "raw", config)
+    bundle = processor(raw, config)
     _run_gates(bundle, extra_validator, min_length=int((config.get("processing", {}) or {}).get("min_length", MIN_LENGTH)))
 
     split_cfg = config.get("split", {}) or {}
@@ -314,5 +358,9 @@ def _package_version() -> str:
 __all__ = [
     "MIN_LENGTH",
     "content_hash",
+    "data_dir",
+    "data_name",
+    "processed_dir",
+    "raw_dir",
     "run_pipeline",
 ]

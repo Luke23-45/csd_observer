@@ -276,6 +276,45 @@ def validate_config(config: dict[str, Any]) -> None:
                     f"got {n_traj_i}"
                 )
     effective_min_length = _effective_min_length(dataset_name, dataset_block, overrides, processing)
+
+    # ---- R2.4: label_window vs the effective length (learned only) ----
+    # ``label_window`` marks the last ``label_window`` steps before tau as
+    # the alarm target; a window longer than the shortest trajectory marks
+    # the whole prefix positive and saturates the supervision signal. This
+    # is a supervision invariant, so it fires even when the MIN_LENGTH gate
+    # is bypassed: real datasets with ``min_length < 100`` (daphnia) would
+    # otherwise silently train with a saturated label window. Indicators
+    # never consume ``label_window``, so only learned-method runs check it.
+    if learned and training_enabled:
+        label_window = (training or {}).get("label_window") if isinstance(training, dict) else None
+        if label_window is not None and effective_min_length is not None and int(label_window) > effective_min_length:
+            raise ValueError(
+                f"training.label_window {label_window} exceeds min dataset length "
+                f"{effective_min_length} (label_window longer than the trajectory "
+                f"saturates the alarm signal); set a dataset-appropriate "
+                f"training.label_window (e.g. <= {effective_min_length})"
+            )
+
+    # ---- R2.4: TAC aligned ramp windows must host the early-window ----
+    # With chunking enabled each ramp trace is one window aligned to its
+    # detected onset at ``ramp_pre_samples``; the evaluation early-window
+    # ``[tau - early_start_delta, tau - early_end_delta)`` must therefore
+    # fit inside it. Defaults (50/5 vs 2048/2048) pass; oversized deltas
+    # would silently clip every early-warning window to nothing.
+    if dataset_name == "tac" and isinstance(dataset_block, dict):
+        proc = dataset_block.get("processing") or {}
+        if proc.get("analysis_window") is not None:
+            pre = proc.get("ramp_pre_samples")
+            post = proc.get("ramp_post_samples")
+            if pre is not None and (early_start_delta > float(pre) or early_end_delta > float(post or 0)):
+                raise ValueError(
+                    f"TAC aligned ramp windows (ramp_pre_samples={pre}, "
+                    f"ramp_post_samples={post}) cannot host the early-warning "
+                    f"window (early_start_delta={early_start_delta}, "
+                    f"early_end_delta={early_end_delta}); reduce the deltas or "
+                    f"raise ramp_pre_samples/ramp_post_samples"
+                )
+
     if effective_min_length is not None and not skip_min_gates:
         if effective_min_length < 100:
             raise ValueError(
@@ -298,12 +337,6 @@ def validate_config(config: dict[str, Any]) -> None:
                     f"model.patchtst.patch_len {patch_len} exceeds min dataset length "
                     f"{effective_min_length} (patch_len must fit inside a trajectory)"
                 )
-        label_window = (training or {}).get("label_window") if isinstance(training, dict) else None
-        if label_window is not None and int(label_window) > effective_min_length:
-            raise ValueError(
-                f"training.label_window {label_window} exceeds min dataset length "
-                f"{effective_min_length}"
-            )
 
 
 def seed_schedule(

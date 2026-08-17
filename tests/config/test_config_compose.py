@@ -90,14 +90,21 @@ def test_synthetic_runs_validate(evaluation: str) -> None:
 
 
 @pytest.mark.parametrize("dataset", ["tac", "daphnia_ext"])
-def test_real_datasets_validate_and_require_processed_data(dataset: str, tmp_path: Path) -> None:
+def test_real_datasets_validate_and_require_processed_data(dataset: str, tmp_path: Path,
+                                                           monkeypatch: pytest.MonkeyPatch) -> None:
     """Real dataset names are registry-known, so validation accepts them;
     missing processed data surfaces at load time (provisioning), not at
     config validation."""
+    # daphnia_ext lowers processing.min_length to 20 (real data has only
+    # ~30-60 census days per replicate); the validate-time >=100 DFA gate
+    # is bypassed with the documented CI/smoke escape hatch, exactly like
+    # the synthetic smoke runs.
+    monkeypatch.setenv("CSD_OBSERVER_SKIP_MIN_LENGTH_GATES", "1")
     config = _compose([f"dataset={dataset}"])
     validate_config(config)
     assert config["dataset"]["name"] == dataset
-    assert config["dataset"]["processing"]["min_length"] == 100
+    expected = 100 if dataset == "tac" else 20
+    assert config["dataset"]["processing"]["min_length"] == expected
 
     from csd_observer.datasets.common.errors import DatasetError, DatasetErrorCode
     from csd_observer.datasets.registry import get_dataset
@@ -152,6 +159,34 @@ def test_learned_method_with_training_ok() -> None:
     config = _compose(["models=[LSTM-AlarmNet]", "training=default"])
     validate_config(config)
     assert config["training"]["enabled"] is True
+
+
+def test_learned_label_window_invariant_fires_for_daphnia(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R2.4: daphnia min_length=20 makes the default label_window=60 mark
+    whole trajectories positive (saturated supervision). The invariant is
+    a supervision check, so it fires even under the min-length-gate
+    bypass; a dataset-appropriate label_window passes."""
+    monkeypatch.setenv("CSD_OBSERVER_SKIP_MIN_LENGTH_GATES", "1")
+    bad = _compose(["dataset=daphnia_ext", "models=[LSTM-AlarmNet]"])
+    with pytest.raises(ValueError, match="label_window"):
+        validate_config(bad)
+    ok = _compose(
+        ["dataset=daphnia_ext", "models=[LSTM-AlarmNet]", "training.label_window=10"]
+    )
+    validate_config(ok)
+
+
+def test_tac_aligned_ramp_window_early_window_invariant() -> None:
+    """R2.4: with chunking, TAC aligned ramp windows host the onset at
+    ramp_pre_samples; an early_start_delta beyond it would clip every
+    early-warning window to nothing and must fail validation."""
+    cfg = _compose(["dataset=tac", "evaluation.early_start_delta=3000"])
+    with pytest.raises(ValueError, match="ramp_pre_samples"):
+        validate_config(cfg)
+    ok = _compose(["dataset=tac"])
+    validate_config(ok)
 
 
 def test_empty_models_rejected() -> None:

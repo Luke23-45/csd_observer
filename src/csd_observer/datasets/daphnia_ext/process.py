@@ -1,141 +1,163 @@
-"""DaphniaExt table processing with explicit column/treatment mappings.
+"""DaphniaExt real-data processing (§5.4) over the Drake & Griffen (2010)
+``timeseries.csv`` / ``extinctions.csv`` tables.
 
-Two layers:
+The processor reproduces the aggregation of the paper's ``preprocess.R``:
 
-* ``process_table`` — strict, low-level rows-to-array conversion (equal
-  aligned lengths, explicit labels; no inference);
-* ``process`` — the §5.4 archive processor: README treatment coding +
-  per-replicate daily counts, aligned on the transition (t=0 at
-  extinction for positives, at the last recorded day for nulls) with
-  ``bifurcation_times`` set to the CSD-annotation window offset
-  (``processing.tau_annotation_days``, default 110 per Nature 467:456)
-  relative to the aligned origin.
+* per census row ``y = mean(sample1..3)``;
+* ``day`` = days since the experiment start (first census date);
+* restart populations ``H7,H9,J4,K2,K10`` are re-identified as ``ID+"2"``
+  for ``day >= restart_threshold_day`` (the paper uses 154), so the first
+  (pre-treatment, extinct) attempt and the restarted population become
+  distinct trajectories;
+* ``populations = aggregate(sum of y by (ID2, day))`` — the chamber-level
+  daily count is the *sum over subpops* (both Subpop=1 and Subpop=2).
 
-The README coding (R3 known-unknown) is parsed with explicit key:value
-patterns and never guessed: a replicate without a treatment label from
-either the README or ``processing.treatments`` raises
-``PROCESS_ANNOTATION_MISSING``; the effective mapping is recorded in the
-manifest so layout changes force re-processing.
+Labels come from ``extinctions.csv``: ``Deteriorating`` (1 = signal,
+0 = null) and the extinction day ``End - Start`` in days. The extinction
+table uses an ``a`` suffix for the first (pre-treatment) attempt of a
+restart population while the recoded time series uses a ``2`` suffix for
+the restarted population, so the two label rows map as:
+
+* ``H7a`` -> first attempt ``H7`` (rows with ``day < restart_threshold_day``);
+* ``H7`` -> restarted population ``H72`` (rows with ``day >= threshold``).
+
+Non-restart IDs map directly. A population with no matching extinction
+record (or vice versa) fails loudly (``PROCESS_ANNOTATION_MISSING``);
+the effective mapping is recorded in the manifest.
 """
 
 from __future__ import annotations
 
-import re
-import zipfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from csd_observer.datasets.common.errors import DatasetError, DatasetErrorCode
-from csd_observer.datasets.common.ingest import extract_archive
 
-_MIN_LENGTH_DEFAULT = 100
+_MIN_LENGTH_DEFAULT = 20
 
-# Generic ``key: value`` / ``key = value`` lines; the config
-# ``processing.treatments`` map overrides and is the escape hatch for an
-# unanticipated README layout (recorded at L3.18).
-_README_KEY_VALUE = re.compile(r"^\s*(replicate|treatment|extinction[_\s]?day|extinction)\s*[:=]\s*(.+?)\s*$", re.IGNORECASE)
-
-_TRUE_TOKENS = {"true", "1", "yes", "positive", "treatment", "extinct", "extinction"}
-_FALSE_TOKENS = {"false", "0", "no", "null", "control", "negative", "constant"}
+_RESTART_IDS = ["H7", "H9", "J4", "K2", "K10"]
+_RESTART_THRESHOLD_DAY = 154
 
 
-def process_table(rows: list[dict[str, Any]], *, replicate_column: str, time_column: str,
-                  count_column: str, positive_column: str, min_length: int = 100) -> dict[str, np.ndarray]:
-    """Convert already parsed rows; no treatment labels are inferred."""
-    required = {replicate_column, time_column, count_column, positive_column}
-    if not rows or not required.issubset(rows[0]):
-        raise DatasetError(DatasetErrorCode.PROCESS_ANNOTATION_MISSING, f"missing explicit columns: {sorted(required)}")
-    groups: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        groups.setdefault(str(row[replicate_column]), []).append(row)
-    features: list[np.ndarray] = []
-    positive: list[bool] = []
-    for replicate, group in sorted(groups.items()):
-        group = sorted(group, key=lambda r: float(r[time_column]))
-        if len(group) < min_length:
-            raise DatasetError(DatasetErrorCode.PROCESS_SHORT_LENGTH, f"replicate {replicate} has {len(group)} rows")
-        try:
-            values = np.asarray([float(r[count_column]) for r in group], dtype=np.float32)
-            label_values = {str(r[positive_column]).strip().lower() for r in group}
-        except (TypeError, ValueError) as exc:
-            raise DatasetError(DatasetErrorCode.PROCESS_ANNOTATION_MISSING, str(exc)) from exc
-        if len(label_values) != 1 or not label_values <= (_TRUE_TOKENS | _FALSE_TOKENS):
-            raise DatasetError(DatasetErrorCode.PROCESS_ANNOTATION_MISSING, f"replicate {replicate} has inconsistent treatment labels")
-        if not np.isfinite(values).all() or np.any(values < 0):
-            raise DatasetError(DatasetErrorCode.PROCESS_NONFINITE, f"replicate {replicate} has invalid counts")
-        features.append(values[:, None])
-        positive.append(label_values.pop() in _TRUE_TOKENS)
-    length = {len(x) for x in features}
-    if len(length) != 1:
-        raise DatasetError(DatasetErrorCode.PROCESS_SHORT_LENGTH, "replicates must have equal aligned lengths")
-    return {"features": np.stack(features), "seq_lengths": np.full(len(features), length.pop(), dtype=np.int64),
-            "is_positive": np.asarray(positive, dtype=bool)}
+def _parse_date(value: str) -> datetime:
+    return datetime.strptime(str(value).strip(), "%m/%d/%Y")
 
 
-def parse_readme(text: str) -> dict[str, dict[str, Any]]:
-    """Extract per-replicate ``{treatment, extinction_day}`` from README text.
+def _days_since(value: str, start: datetime) -> int:
+    return int((_parse_date(value) - start).days)
 
-    Accepts ``key: value`` / ``key = value`` lines (case-insensitive
-    keys: ``replicate``, ``treatment``, ``extinction_day``). Returns only
-    what is found; callers combine this with ``processing.treatments``
-    and must fail loudly on missing labels (no guessing).
+
+def _read_csv(path: Path) -> list[dict[str, Any]]:
+    import csv
+
+    with open(path, encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        reader.fieldnames = [str(h).strip() for h in reader.fieldnames]
+        rows = [dict(r) for r in reader]
+    if not rows:
+        raise DatasetError(DatasetErrorCode.INGEST_MANIFEST_MISMATCH, f"empty table {path.name}")
+    return rows
+
+
+def _aggregate_timeseries(rows: list[dict[str, Any]], *, restart_ids: list[str],
+                          restart_threshold_day: int, start: datetime) -> dict[str, list[tuple[int, float]]]:
+    """Aggregate ``timeseries.csv`` to chamber-level daily counts.
+
+    Returns ``{population_id: [(day, count), ...]}`` after summing the
+    per-subpop mean of ``sample1..3`` on each census day.
     """
-    out: dict[str, dict[str, Any]] = {}
-    current: dict[str, Any] | None = None
-    current_id: str | None = None
-    for line in text.splitlines():
-        match = _README_KEY_VALUE.match(line)
-        if not match:
-            continue
-        key, value = match.group(1).lower(), match.group(2).strip()
-        if key == "replicate":
-            current_id = value
-            current = out.setdefault(current_id, {})
-        elif current is None:
-            continue
-        elif key == "treatment":
-            current["treatment"] = value.lower()
-        elif key in ("extinction_day", "extinction"):
-            try:
-                current["extinction_day"] = int(float(value))
-            except ValueError as exc:
-                raise DatasetError(
-                    DatasetErrorCode.PROCESS_ANNOTATION_MISSING,
-                    f"unparseable extinction day {value!r}",
-                ) from exc
-    return out
-
-
-def _read_table(data_file: Path) -> list[dict[str, Any]]:
-    import pandas as pd
-
-    delimiters = [",", "\t", ";", " ", "|"]
-    for delimiter in delimiters:
+    pooled: dict[str, dict[int, float]] = {}
+    for row in rows:
+        population = str(row["ID"]).strip()
+        day = _days_since(row["Date"], start)
         try:
-            frame = pd.read_csv(data_file, delimiter=delimiter, encoding="utf-8", on_bad_lines="error")
-        except Exception:
-            continue
-        if len(frame.columns) > 1:
-            return [dict(row) for row in frame.to_dict(orient="records")]
-    raise DatasetError(
-        DatasetErrorCode.INGEST_MANIFEST_MISMATCH,
-        f"cannot parse table {data_file.name} with any supported delimiter",
-    )
+            y = (float(row["sample1"]) + float(row["sample2"]) + float(row["sample3"])) / 3.0
+        except (KeyError, TypeError, ValueError) as exc:
+            raise DatasetError(
+                DatasetErrorCode.PROCESS_ANNOTATION_MISSING,
+                f"timeseries row for {population} lacks numeric sample1..3: {exc}",
+            ) from exc
+        if not np.isfinite(y):
+            raise DatasetError(DatasetErrorCode.PROCESS_NONFINITE, f"non-finite count for {population} on day {day}")
+        if population in restart_ids and day >= restart_threshold_day:
+            population = f"{population}2"
+        pooled.setdefault(population, {})
+        pooled[population][day] = pooled[population].get(day, 0.0) + y
+    return {population: sorted(days.items()) for population, days in pooled.items()}
+
+
+def _population_label(ex_id: str, *, restart_ids: list[str]) -> str:
+    """Map an ``extinctions.csv`` ID to the aggregated population ID."""
+    base = ex_id[:-1] if ex_id.endswith("a") else ex_id
+    if ex_id.endswith("a") and base in restart_ids:
+        return base
+    if ex_id in restart_ids:
+        return f"{ex_id}2"
+    return ex_id
+
+
+def _read_extinctions(rows: list[dict[str, Any]], *, restart_ids: list[str],
+                      experiment_start: datetime) -> dict[str, dict[str, Any]]:
+    labels: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        ex_id = str(row["ID"]).strip()
+        pop = _population_label(ex_id, restart_ids=restart_ids)
+        try:
+            start = _parse_date(row["Start"])
+            end = _parse_date(row["End"])
+        except (KeyError, ValueError) as exc:
+            raise DatasetError(
+                DatasetErrorCode.PROCESS_ANNOTATION_MISSING,
+                f"extinctions row for {ex_id} lacks parseable Start/End: {exc}",
+            ) from exc
+        deteriorating = str(row["Deteriorating"]).strip().lower()
+        if deteriorating not in {"1", "0", "true", "false"}:
+            raise DatasetError(
+                DatasetErrorCode.PROCESS_ANNOTATION_MISSING,
+                f"extinctions row for {ex_id} has unknown Deteriorating {deteriorating!r}",
+            )
+        if pop in labels:
+            raise DatasetError(
+                DatasetErrorCode.PROCESS_ANNOTATION_MISSING,
+                f"duplicate extinction label for population {pop} ({ex_id} and {labels[pop]['extinction_id']})",
+            )
+        labels[pop] = {
+            "extinction_id": ex_id,
+            "is_positive": deteriorating in {"1", "true"},
+            # ``t0`` shares the census-day axis (experiment-relative) so the
+            # tau window lands inside the trajectory even for restarted
+            # populations (whose EX ``Start`` is the restart date, not the
+            # experiment start).
+            "extinction_day": int((end - experiment_start).days),
+            "start": row["Start"].strip(),
+            "end": row["End"].strip(),
+        }
+    return labels
 
 
 def _nearest_index(times: np.ndarray, target: float) -> int:
-    idx = int(np.argmin(np.abs(times - target)))
-    return idx
+    return int(np.argmin(np.abs(times - target)))
 
 
 def process(raw_dir: str | Path, config: dict[str, Any]) -> dict[str, Any]:
-    """§5.4 DaphniaExt processor handle: ``raw_dir -> uniform bundle``."""
+    """§5.4 DaphniaExt processor handle: ``raw_dir -> uniform bundle``.
+
+    Reads ``timeseries.csv`` + ``extinctions.csv`` from the extracted
+    ``data-and-code`` layout under ``raw_dir`` (configurable via
+    ``processing.data_file`` / ``processing.extinctions_file``).
+    """
     raw = Path(raw_dir)
     processing = dict(config.get("processing", {}) or {})
     min_length = int(processing.get("min_length", _MIN_LENGTH_DEFAULT))
     tau_days = int(processing.get("tau_annotation_days", 110))
+    restart_ids = list(processing.get("restart_ids", _RESTART_IDS))
+    restart_threshold_day = processing.get("restart_threshold_day")
+    if restart_threshold_day is None:
+        restart_threshold_day = _RESTART_THRESHOLD_DAY
+    restart_threshold_day = int(restart_threshold_day)
     window_days = processing.get("window_days")
     if window_days is not None:
         window_days = int(window_days)
@@ -145,145 +167,95 @@ def process(raw_dir: str | Path, config: dict[str, Any]) -> dict[str, Any]:
     specs = {str(spec["path"]): spec for spec in config.get("expected_files", [])}
     if not specs:
         raise DatasetError(DatasetErrorCode.INGEST_MANIFEST_MISMATCH, "daphnia_ext config has no expected_files")
-    readme_path = None
-    archive_path = None
+    data_root = raw
     for name in specs:
-        candidate = raw / name
-        if not candidate.exists():
-            raise DatasetError(DatasetErrorCode.INGEST_ARCHIVE, f"missing raw file: {candidate}")
-        lowered = name.lower()
-        if "readme" in lowered or lowered.endswith(".txt"):
-            readme_path = candidate
-        else:
-            archive_path = candidate
-    if archive_path is None or not zipfile.is_zipfile(archive_path):
-        raise DatasetError(DatasetErrorCode.INGEST_ARCHIVE, f"expected a data ZIP archive, got {archive_path}")
+        candidate = raw / str(name)
+        if candidate.is_dir():
+            data_root = candidate
+            break
+    ts_name = str(processing.get("data_file", "timeseries.csv"))
+    ex_name = str(processing.get("extinctions_file", "extinctions.csv"))
+    ts_path = data_root / ts_name
+    ex_path = data_root / ex_name
+    for path, what in ((ts_path, "timeseries"), (ex_path, "extinctions")):
+        if not path.is_file():
+            raise DatasetError(DatasetErrorCode.INGEST_ARCHIVE, f"missing {what} table: {path}")
 
-    # --- treatment coding: README patterns + explicit config map ---
-    annotations: dict[str, dict[str, Any]] = {}
-    if readme_path is not None:
-        try:
-            annotations = parse_readme(readme_path.read_text(encoding="utf-8", errors="replace"))
-        except OSError as exc:
-            raise DatasetError(DatasetErrorCode.INGEST_ARCHIVE, f"cannot read README: {exc}") from exc
-    configured = dict(processing.get("treatments", {}) or {})
-    for replicate, mapping in configured.items():
-        annotations.setdefault(str(replicate), {})
-        for key, value in mapping.items():
-            annotations[str(replicate)][str(key).lower()] = value
-
-    # --- data table ---
-    extraction_dir = raw / "_extracted"
-    marker = extraction_dir / ".extracted.ok"
-    if not marker.is_file():
-        extract_archive(archive_path, extraction_dir)
-        marker.write_text("ok", encoding="utf-8")
-    data_file_name = processing.get("data_file")
-    candidates = sorted(p for p in extraction_dir.rglob("*")
-                        if p.is_file() and p.suffix.lower() in {".csv", ".txt", ".tsv"})
-    if data_file_name:
-        matches = [p for p in candidates if p.name == data_file_name]
-        if not matches:
-            raise DatasetError(
-                DatasetErrorCode.INGEST_MANIFEST_MISMATCH,
-                f"processing.data_file {data_file_name!r} not found in archive; available: {[p.name for p in candidates]}",
-            )
-        data_file = matches[0]
-    else:
-        if not candidates:
-            raise DatasetError(DatasetErrorCode.INGEST_ARCHIVE, "archive contains no CSV/TSV/TXT table")
-        data_file = candidates[0]
-        if data_file_name is None:
-            processing["data_file"] = data_file.name
-
-    rows = _read_table(data_file)
-    if not rows:
-        raise DatasetError(DatasetErrorCode.PROCESS_ANNOTATION_MISSING, "data table is empty")
-
-    rep_col = str(processing.get("replicate_column", "replicate"))
-    time_col = str(processing.get("time_column", "day"))
-    count_col = str(processing.get("count_column", "count"))
-    positive_col = str(processing.get("positive_column", "treatment"))
-    required = {rep_col, time_col, count_col, positive_col}
-    available = set(rows[0])
-    missing = required - available
-    if missing:
+    ts_rows = _read_csv(ts_path)
+    if not ts_rows:
+        raise DatasetError(DatasetErrorCode.INGEST_MANIFEST_MISMATCH, "empty timeseries table")
+    required_ts = {"ID", "Subpop", "Date", "sample1", "sample2", "sample3"}
+    missing_ts = sorted(required_ts - set(ts_rows[0]))
+    if missing_ts:
         raise DatasetError(
             DatasetErrorCode.INGEST_MANIFEST_MISMATCH,
-            f"table {data_file.name} lacks columns {sorted(missing)}; available: {sorted(available)}",
+            f"timeseries table missing columns: {missing_ts}",
         )
+    dates = sorted(_parse_date(str(r["Date"]).strip()) for r in ts_rows)
+    start = dates[0]
+    populations = _aggregate_timeseries(
+        ts_rows, restart_ids=restart_ids, restart_threshold_day=restart_threshold_day, start=start,
+    )
+    labels = _read_extinctions(_read_csv(ex_path), restart_ids=restart_ids, experiment_start=start)
 
-    groups: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        groups.setdefault(str(row[rep_col]), []).append(row)
+    missing_labels = sorted(set(populations) - set(labels))
+    if missing_labels:
+        raise DatasetError(
+            DatasetErrorCode.PROCESS_ANNOTATION_MISSING,
+            f"populations without an extinction label: {missing_labels}",
+        )
+    orphan_labels = sorted(set(labels) - set(populations))
+    if orphan_labels:
+        raise DatasetError(
+            DatasetErrorCode.PROCESS_ANNOTATION_MISSING,
+            f"extinction labels without a matching population: {orphan_labels}",
+        )
 
     features: list[np.ndarray] = []
     lengths: list[int] = []
     bifs: list[np.ndarray] = []
     positives: list[bool] = []
-    used_annotations: dict[str, Any] = {}
+    used_labels: dict[str, Any] = {}
+    excluded_short: list[dict[str, Any]] = []
 
-    for replicate in sorted(groups):
-        group = sorted(groups[replicate], key=lambda r: float(r[time_col]))
-        try:
-            times = np.asarray([float(r[time_col]) for r in group], dtype=np.float64)
-            values = np.asarray([float(r[count_col]) for r in group], dtype=np.float32)
-        except (TypeError, ValueError) as exc:
-            raise DatasetError(DatasetErrorCode.PROCESS_ANNOTATION_MISSING, str(exc)) from exc
+    for population in sorted(populations):
+        days, counts = zip(*populations[population], strict=True)
+        times = np.asarray(days, dtype=np.float64)
+        values = np.asarray(counts, dtype=np.float32)
         if not np.isfinite(values).all() or np.any(values < 0):
-            raise DatasetError(DatasetErrorCode.PROCESS_NONFINITE, f"replicate {replicate} has invalid counts")
+            raise DatasetError(DatasetErrorCode.PROCESS_NONFINITE, f"population {population} has invalid counts")
 
-        annotation = annotations.get(replicate, {})
-        label_values = {str(r[positive_col]).strip().lower() for r in group}
-        if "treatment" in annotation:
-            treatment = str(annotation["treatment"]).lower()
-            if treatment not in (_TRUE_TOKENS | _FALSE_TOKENS):
-                raise DatasetError(
-                    DatasetErrorCode.PROCESS_ANNOTATION_MISSING,
-                    f"replicate {replicate}: unknown treatment token {treatment!r}",
-                )
-            is_positive = treatment in _TRUE_TOKENS
-        else:
-            if not label_values:
-                raise DatasetError(
-                    DatasetErrorCode.PROCESS_ANNOTATION_MISSING,
-                    f"replicate {replicate} has no treatment label (README or processing.treatments)",
-                )
-            if len(label_values) > 1 or not label_values <= (_TRUE_TOKENS | _FALSE_TOKENS):
-                raise DatasetError(
-                    DatasetErrorCode.PROCESS_ANNOTATION_MISSING,
-                    f"replicate {replicate} has inconsistent treatment labels {sorted(label_values)}",
-                )
-            is_positive = label_values.pop() in _TRUE_TOKENS
-            treatment = "positive" if is_positive else "null"
-        used_annotations[replicate] = {"treatment": treatment}
+        label = labels[population]
+        is_positive = bool(label["is_positive"])
+        used_labels[population] = {
+            "extinction_id": label["extinction_id"],
+            "is_positive": is_positive,
+            "extinction_day": label["extinction_day"],
+        }
 
-        if is_positive:
-            extinction_day = annotation.get("extinction_day")
-            if extinction_day is None:
-                raise DatasetError(
-                    DatasetErrorCode.PROCESS_ANNOTATION_MISSING,
-                    f"positive replicate {replicate} lacks an extinction day "
-                    f"(README or processing.treatments.{replicate}.extinction_day)",
-                )
-            t0 = float(extinction_day)
-            used_annotations[replicate]["extinction_day"] = t0
-        else:
-            t0 = float(np.max(times))
-
-        if window_days is None:
-            selected = group
-        else:
-            selected = [r for r in group if t0 - window_days <= float(r[time_col]) <= t0]
-        if len(selected) < min_length:
+        t0 = float(label["extinction_day"])
+        if is_positive and t0 < times[0]:
             raise DatasetError(
-                DatasetErrorCode.PROCESS_SHORT_LENGTH,
-                f"replicate {replicate} has {len(selected)} samples in the analysis window (< {min_length})",
+                DatasetErrorCode.PROCESS_ANNOTATION_MISSING,
+                f"positive population {population} has extinction_day {t0} before its first census {times[0]}",
             )
-        times_sel = np.asarray([float(r[time_col]) for r in selected], dtype=np.float64)
-        values_sel = np.asarray([float(r[count_col]) for r in selected], dtype=np.float32)
-        if not np.isfinite(values_sel).all() or np.any(values_sel < 0):
-            raise DatasetError(DatasetErrorCode.PROCESS_NONFINITE, f"replicate {replicate} has invalid counts in window")
+        if window_days is None:
+            selected = list(range(len(times)))
+        else:
+            selected = [i for i in range(len(times)) if t0 - window_days <= times[i] <= t0]
+        if len(selected) < min_length:
+            # Exclude too-short populations (e.g. dead first attempts before
+            # a restart) and record them; the length gate is checked later by
+            # the validate step on the surviving trajectories.
+            excluded_short.append({
+                "population": population,
+                "census_days": len(selected),
+                "min_length": min_length,
+                "is_positive": is_positive,
+            })
+            continue
+        times_sel = times[selected]
+        values_sel = values[selected]
 
         if is_positive:
             tau_index = _nearest_index(times_sel, t0 - tau_days)
@@ -297,11 +269,11 @@ def process(raw_dir: str | Path, config: dict[str, Any]) -> dict[str, Any]:
         positives.append(is_positive)
 
     if not features:
-        raise DatasetError(DatasetErrorCode.INGEST_ARCHIVE, "no trajectories produced from DaphniaExt archive")
+        raise DatasetError(DatasetErrorCode.INGEST_ARCHIVE, "no trajectories produced from DaphniaExt data")
     if not any(positives) or all(positives):
         raise DatasetError(
             DatasetErrorCode.SPLIT_IMBALANCE,
-            f"DaphniaExt needs both positive and null replicates, got "
+            f"DaphniaExt needs both positive and null populations, got "
             f"{sum(positives)} positive / {len(positives) - sum(positives)} null",
         )
 
@@ -320,9 +292,13 @@ def process(raw_dir: str | Path, config: dict[str, Any]) -> dict[str, Any]:
         # user-controlled keys).
         "meta": {
             "processing": {
-                "data_file": data_file.name,
-                "annotations": used_annotations,
-                "readme_parsed": readme_path is not None,
+                "start_date": start.strftime("%m/%d/%Y"),
+                "restart_ids": sorted(restart_ids),
+                "restart_threshold_day": restart_threshold_day,
+                "data_file": ts_name,
+                "extinctions_file": ex_name,
+                "labels": used_labels,
+                "excluded_short": excluded_short,
             }
         },
     }
@@ -350,4 +326,4 @@ def validate_annotation(bundle: dict[str, Any]) -> None:
                 )
 
 
-__all__ = ["parse_readme", "process", "process_table", "validate_annotation"]
+__all__ = ["process", "validate_annotation"]

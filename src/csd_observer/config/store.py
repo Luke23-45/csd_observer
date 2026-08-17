@@ -66,7 +66,13 @@ class ProcessingConfig:
     channel_name: str | None = None  # explicit TDMS channel; else auto-select
     section_pattern_stationary: str = "Stationary"
     section_pattern_ramp: str = "Ramp"
-    ramp_onset_index: int = 0  # transition index inside a ramp section (§5.4)
+    ramp_onset_index: int | None = None  # explicit transition index inside a ramp
+    # section; ``None`` = auto-detect from the envelope (§5.4, rate-dependent
+    # transition delay is measured from the data, not assumed)
+    ramp_onset_detect_window: int | None = None  # rolling window (samples); None = TAC default 5000
+    ramp_onset_detect_factor: float | None = None  # growth threshold = factor * baseline; None = 3.0
+    ramp_pre_samples: int | None = None  # pre-onset history in an aligned ramp window; None = 200
+    ramp_post_samples: int | None = None  # post-onset confirmation in an aligned ramp window; None = 100
     # --- DaphniaExt ---
     replicate_column: str = "replicate"
     time_column: str = "day"
@@ -75,6 +81,9 @@ class ProcessingConfig:
     tau_annotation_days: int = 110  # Nature 467:456 CSD window (~110 days)
     window_days: int | None = None  # None = full span up to the transition
     data_file: str | None = None  # explicit table inside the archive
+    extinctions_file: str | None = None  # explicit label table (real data)
+    restart_ids: list[str] = field(default_factory=list)  # restarted IDs
+    restart_threshold_day: int | None = None  # recode restart rows at/after this day
     treatments: dict[str, Any] = field(default_factory=dict)  # per-replicate
     # {replicate: {"treatment": "positive"|"null", "extinction_day": int}}
 
@@ -283,19 +292,22 @@ def register_configs() -> None:
         feature_mode="envelope",
         archive_type="zip",
         parser="nptdms",
-        expected_files=[ExpectedFileConfig(
-            path="Experimental_time_traces_tdms.zip",
-            size=302008984,
-            md5="82cc5298c245ad509e1ee414e2c34941",
-        )],
+        expected_files=[ExpectedFileConfig(path="Experimental_time_traces_tdms", size=0, md5="")],
         processing=ProcessingConfig(
             envelope="raw",
             sample_rate_hz=None,
             band_low_hz=None,
             band_high_hz=None,
-            analysis_window=None,
+            analysis_window=4096,
+            channel_group="Set0",
+            channel_name="Mic1",
             section_pattern_stationary="Stationary",
             section_pattern_ramp="Ramp",
+            ramp_onset_index=None,
+            ramp_onset_detect_window=5000,
+            ramp_onset_detect_factor=3.0,
+            ramp_pre_samples=2048,
+            ramp_post_samples=2048,
         ),
         split={"replicate_based": True, "seed": 42, "train_frac": 0.6, "val_frac": 0.2},
     )
@@ -309,16 +321,21 @@ def register_configs() -> None:
         archive_type="zip",
         parser="zip-csv",
         expected_files=[
-            ExpectedFileConfig(path="data-and-code.zip", size=13273254, md5="923e08e6bafae412c43250fef0752ac7"),
+            ExpectedFileConfig(path="data-and-code", size=0, md5=""),
             ExpectedFileConfig(path="README_for_data-and-code.txt", size=4848, md5="11770ce4f5a2b5369dce6f6f846340c5"),
         ],
         processing=ProcessingConfig(
-            replicate_column="replicate",
-            time_column="day",
+            min_length=20,
+            replicate_column="ID",
+            time_column="Date",
             count_column="count",
-            positive_column="treatment",
+            positive_column="Deteriorating",
             tau_annotation_days=110,
             window_days=None,
+            data_file="timeseries.csv",
+            extinctions_file="extinctions.csv",
+            restart_ids=["H7", "H9", "J4", "K2", "K10"],
+            restart_threshold_day=154,
         ),
         split={"replicate_based": True, "seed": 42, "train_frac": 0.6, "val_frac": 0.2},
     )

@@ -13,16 +13,22 @@ feature_mode: envelope
 archive_type: zip
 parser: nptdms
 expected_files:
-  - path: Experimental_time_traces_tdms.zip
-    size: 302008984
-    md5: 82cc5298c245ad509e1ee414e2c34941
+  - path: Experimental_time_traces_tdms
+    size: 0
+    md5: ""
 processing:
   min_length: 100
   normalization: none
   envelope: raw
+  analysis_window: 4096
+  channel_group: Set0
+  channel_name: Mic1
   section_pattern_stationary: Stationary
   section_pattern_ramp: Ramp
-  ramp_onset_index: 0
+  ramp_onset_detect_window: 5000
+  ramp_onset_detect_factor: 3.0
+  ramp_pre_samples: 2048
+  ramp_post_samples: 2048
   replicate_column: replicate
   time_column: day
   count_column: count

@@ -21,3 +21,5 @@ __pycache__/
 .coverage
 analysis
 legacy
+datasets
+/docs/reference

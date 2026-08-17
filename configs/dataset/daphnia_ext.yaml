@@ -12,24 +12,32 @@ feature_mode: channel_0
 archive_type: zip
 parser: zip-csv
 expected_files:
-  - path: data-and-code.zip
-    size: 13273254
-    md5: 923e08e6bafae412c43250fef0752ac7
+  - path: data-and-code
+    size: 0
+    md5: ""
   - path: README_for_data-and-code.txt
     size: 4848
     md5: 11770ce4f5a2b5369dce6f6f846340c5
 processing:
-  min_length: 100
+  min_length: 20
   normalization: none
   envelope: raw
   section_pattern_stationary: Stationary
   section_pattern_ramp: Ramp
-  ramp_onset_index: 0
-  replicate_column: replicate
-  time_column: day
+  replicate_column: ID
+  time_column: Date
   count_column: count
-  positive_column: treatment
+  positive_column: Deteriorating
   tau_annotation_days: 110
+  data_file: timeseries.csv
+  extinctions_file: extinctions.csv
+  restart_ids:
+    - H7
+    - H9
+    - J4
+    - K2
+    - K10
+  restart_threshold_day: 154
 split:
   replicate_based: true
   seed: 42

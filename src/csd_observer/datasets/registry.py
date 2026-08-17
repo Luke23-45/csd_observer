@@ -46,15 +46,16 @@ def list_resolvable() -> list[str]:
     """Every dataset name that ``get_dataset`` can load right now:
     synthetic fast paths, the two real datasets with a processor, and any
     additional processed datasets already materialized under
-    ``final_data/``."""
-    from pathlib import Path
-
+    ``<data_root>/processed/``."""
+    from csd_observer.datasets.common.pipeline import data_name
     from csd_observer.datasets.provision import REAL_DATASETS
 
     names = sorted(_SYNTHETIC) + sorted(REAL_DATASETS)
-    root = Path("final_data")
+    root = Path("datasets") / "processed"
     if root.is_dir():
-        names.extend(sorted(p.name for p in root.iterdir() if (p / "processed" / "manifest.json").is_file()))
+        for entry in root.iterdir():
+            if (entry / "manifest.json").is_file():
+                names.append(data_name(entry.name))
     return sorted(set(names))
 
 
@@ -69,9 +70,10 @@ def list_provisionable() -> list[str]:
 
 def _load_processed(name: str, overrides: dict[str, Any]) -> dict[str, Any]:
     """Load a previously processed real dataset; never trigger ingestion."""
-    root = overrides.get("data_root", "final_data")
-    dataset_root = Path(root) / name
-    processed = dataset_root / "processed"
+    from csd_observer.datasets.common.pipeline import processed_dir
+
+    root = overrides.get("data_root", "datasets")
+    processed = processed_dir(root, name)
     manifest = read_manifest(processed / "manifest.json")
     arrays_path = processed / str(manifest.get("arrays_file", "arrays.npz"))
     if not arrays_path.exists():
