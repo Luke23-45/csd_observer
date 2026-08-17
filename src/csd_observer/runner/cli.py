@@ -278,7 +278,8 @@ def _print_summary(protocol: Protocol, state: RunnerState, counts: dict[str, int
                 else:
                     statuses.append("-")
             cells.append(f"seed{seed}=[{' '.join(statuses)}]")
-        print(f"  {method.name:<24} {'  '.join(cells)}")
+        label = f"{method.task}/{method.name}" if method.task else method.name
+        print(f"  {label:<30} {'  '.join(cells)}")
 
 
 def _print_dry_run(
@@ -382,7 +383,7 @@ def run(args: argparse.Namespace) -> int:
                     tag=step.method.output_tag,
                 )
                 ckpt_rel = stage_checkpoint_relative(
-                    outputs_base, run_dir, step.method.model_name, seed=step.seed
+                    outputs_base, run_dir, step.method.name, seed=step.seed
                 )
                 state.mark(
                     step.method.phase_key,

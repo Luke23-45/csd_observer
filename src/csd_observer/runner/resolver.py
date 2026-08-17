@@ -64,12 +64,12 @@ def _find_checkpoint_in_run(
         return None
     candidates = ckpts
     if method_name:
-        safe_prefix = method_name.lower().replace("-", "_").replace(" ", "_")
+        name_clean = method_name.lower().replace("-", "_").replace(" ", "_")
         matched = [
             c
             for c in candidates
-            if method_name in c.name
-            or safe_prefix in c.name.lower().replace("-", "_").replace(" ", "_")
+            if method_name.lower() in c.name.lower()
+            or name_clean in c.name.lower().replace("-", "_").replace(" ", "_")
         ]
         if matched:
             candidates = matched

@@ -326,9 +326,10 @@ class Step:
 
     @property
     def label(self) -> str:
+        task_prefix = f"[{self.method.task}] " if self.method.task else ""
         if self.kind == "eval":
-            return f"{self.method.name} seed={self.seed} eval"
-        return f"{self.method.name} seed={self.seed} stage{self.stage}"
+            return f"{task_prefix}{self.method.name} seed={self.seed} eval"
+        return f"{task_prefix}{self.method.name} seed={self.seed} stage{self.stage}"
 
     @property
     def registry_phase(self) -> str:

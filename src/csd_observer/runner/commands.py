@@ -46,6 +46,10 @@ def train_command(
         "training=default",
         "training.enabled=true",
     ]
+    # For short datasets (daphnia_ext), default training.label_window=10 to respect min_length
+    if method.data == "daphnia_ext" and not any("training.label_window" in d for d in defaults):
+        cmd.append("training.label_window=10")
+
     if ckpt_path is not None:
         key = _model_key(method.name, method.model)
         cmd.append(f"model.{key}.checkpoint={ckpt_path.as_posix()}")
