@@ -263,7 +263,10 @@ def test_run_pipeline_end_to_end(tmp_path: Path) -> None:
     assert state is IngestState.READY_PROCESSED
 
     processed = root / "processed" / "tac"
-    assert (processed / "arrays.npz").exists()
+    assert (processed / "manifest.json").exists()
+    assert (processed / "train" / "train.npz").exists()
+    assert (processed / "val" / "val.npz").exists()
+    assert (processed / "test" / "test.npz").exists()
     manifest = read_manifest(processed / "manifest.json")
     assert manifest["dataset"]["bif_type"] == "subcritical_hopf"
     assert manifest["processing"]["effective"]["sections"] == {"stationary": STATIONARY_FILES, "ramp": RAMP_FILES}

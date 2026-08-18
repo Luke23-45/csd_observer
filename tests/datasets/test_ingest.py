@@ -112,16 +112,37 @@ def test_ingest_manual_timeout(tmp_path: Path) -> None:
 
 
 def test_ingest_manifest_skip_short_circuits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cached processed manifest with valid split files must short-circuit
+    ingest before any remote fetch."""
+    import numpy as np
+
     from csd_observer.datasets.common.ingest import ingest_raw
     from csd_observer.datasets.common.manifest import write_manifest
 
     processed = tmp_path / "processed" / "tac"
+    for split_name in ("train", "val", "test"):
+        split_dir = processed / split_name
+        split_dir.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(
+            split_dir / f"{split_name}.npz",
+            features=np.zeros((1, 32, 1), dtype=np.float32),
+            seq_lengths=np.array([32], dtype=np.int64),
+            bifurcation_times=np.array([33.0], dtype=np.float64),
+            is_positive=np.array([True], dtype=bool),
+        )
     write_manifest(processed / "manifest.json", {
         "schema_version": "1.0",
         "dataset": {"doi": "x"},
         "processing": {"params": {}},
-        "gates": {"passed": ["nonfinite"]},
-        "split": {"policy": "replicate_based"},
+        "gates": {"passed": ["nonfinite", "min_length", "split_balance"]},
+        "split": {
+            "policy": "replicate_based",
+            "splits": {
+                "train": {"file": "train.npz"},
+                "val": {"file": "val.npz"},
+                "test": {"file": "test.npz"},
+            },
+        },
         "content_hash": "abc",
     })
     monkeypatch.setenv("DRYAD_API_TOKEN", "tok")
@@ -220,12 +241,13 @@ def test_provision_wires_processor_and_validator(tmp_path: Path, monkeypatch: py
 
     captured: dict = {}
 
-    def fake_run_pipeline(config, root, name, processor, *, token=None, extra_validator=None):
+    def fake_run_pipeline(config, root, name, processor, *, token=None, extra_validator=None, force_rebuild=False):
         captured["config"] = config
         captured["root"] = root
         captured["name"] = name
         captured["processor"] = processor
         captured["validator"] = extra_validator
+        captured["force_rebuild"] = force_rebuild
         return IngestState.READY_PROCESSED
 
     monkeypatch.setattr(provision_module, "run_pipeline", fake_run_pipeline)

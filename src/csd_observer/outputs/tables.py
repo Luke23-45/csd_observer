@@ -75,7 +75,11 @@ def aggregate_rows(rows: Sequence[ResultRow]) -> list[Aggregate]:
                 detection_rate_std=_nanstd(rate),
                 detection_time_mean=_nanmean(det),
                 detection_time_std=_nanstd(det),
-                detection_time_median=float(np.nanmedian(det)) if det.size else float("nan"),
+                detection_time_median=(
+                    float(np.nanmedian(det))
+                    if det.size and bool(np.isfinite(det).any())
+                    else float("nan")
+                ),
                 ew_auc_mean=_nanmean(ew),
                 ew_auc_std=_nanstd(ew),
                 fpr_mean=_nanmean(fpr),
@@ -243,11 +247,17 @@ def write_paired_wilcoxon_csv(
 def _nanmean(a: np.ndarray) -> float:
     if a.size == 0:
         return float("nan")
+    a = np.asarray(a, dtype=float)
+    if not np.isfinite(a).any():
+        return float("nan")
     return float(np.nanmean(a))
 
 
 def _nanstd(a: np.ndarray) -> float:
     if a.size == 0:
+        return float("nan")
+    a = np.asarray(a, dtype=float)
+    if not np.isfinite(a).any():
         return float("nan")
     return float(np.nanstd(a))
 

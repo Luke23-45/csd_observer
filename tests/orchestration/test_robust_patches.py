@@ -308,6 +308,7 @@ def test_validate_config_min_trajectories_enforced(
 ) -> None:
     from csd_observer.config.validate import validate_config
 
+    monkeypatch.delenv("CSD_OBSERVER_SKIP_MIN_LENGTH_GATES", raising=False)
     cfg = {
         "dataset": {"name": "synthetic_fold"},
         "models": ["VAR-CSD"],
@@ -325,11 +326,14 @@ def test_validate_config_min_trajectories_enforced(
 def test_validate_config_min_length_enforced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """§5.4 MIN_LENGTH: the >=100 floor is DFA-specific, so it fires when
+    DFA-CSD is selected with a too-short series."""
     from csd_observer.config.validate import validate_config
 
+    monkeypatch.delenv("CSD_OBSERVER_SKIP_MIN_LENGTH_GATES", raising=False)
     cfg = {
         "dataset": {"name": "synthetic_fold"},
-        "models": ["VAR-CSD"],
+        "models": ["DFA-CSD"],
         "evaluation": "persistenceaware",
         "k_persist": 5,
         "fpr_target": 0.05,
@@ -339,6 +343,30 @@ def test_validate_config_min_length_enforced(
     }
     with pytest.raises(ValueError, match="min dataset length must be >= 100"):
         validate_config(cfg)
+
+
+def test_validate_config_min_length_gate_is_dfa_specific(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for the cloud real matrix: daphnia (min_length=20) runs
+    only the non-DFA baselines (VAR/AC1/LSTM/TCN/PatchTST), which fit the
+    short series; the MIN_LENGTH gate must not block them."""
+    from csd_observer.config.validate import validate_config
+
+    monkeypatch.delenv("CSD_OBSERVER_SKIP_MIN_LENGTH_GATES", raising=False)
+    cfg = {
+        "dataset": {"name": "daphnia_ext", "processing": {"min_length": 20}},
+        "models": ["VAR-CSD", "LSTM-AlarmNet"],
+        "evaluation": "persistenceaware",
+        "k_persist": 5,
+        "fpr_target": 0.05,
+        "seed_offset": 0,
+        "n_seeds": 1,
+        "split": {"replicate_based": True},
+        "training": {"enabled": True, "epochs": 2, "label_window": 10},
+        "model": {"var_csd": {"window_size": 30}, "lstm": {"hidden_size": 64}},
+    }
+    validate_config(cfg)
 
 
 def test_validate_config_skip_min_gates_env_var(

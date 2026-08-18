@@ -90,16 +90,14 @@ def test_synthetic_runs_validate(evaluation: str) -> None:
 
 
 @pytest.mark.parametrize("dataset", ["tac", "daphnia_ext"])
-def test_real_datasets_validate_and_require_processed_data(dataset: str, tmp_path: Path,
-                                                           monkeypatch: pytest.MonkeyPatch) -> None:
+def test_real_datasets_validate_and_require_processed_data(dataset: str, tmp_path: Path) -> None:
     """Real dataset names are registry-known, so validation accepts them;
     missing processed data surfaces at load time (provisioning), not at
-    config validation."""
-    # daphnia_ext lowers processing.min_length to 20 (real data has only
-    # ~30-60 census days per replicate); the validate-time >=100 DFA gate
-    # is bypassed with the documented CI/smoke escape hatch, exactly like
-    # the synthetic smoke runs.
-    monkeypatch.setenv("CSD_OBSERVER_SKIP_MIN_LENGTH_GATES", "1")
+    config validation. daphnia_ext lowers processing.min_length to 20
+    (real data has only ~30-60 census days per replicate); the >=100 DFA
+    gate (§5.4) is DFA-specific, so the default non-DFA run validates
+    with the gate enabled — the cloud real matrix runs daphnia the same
+    way, without the CI/smoke bypass."""
     config = _compose([f"dataset={dataset}"])
     validate_config(config)
     assert config["dataset"]["name"] == dataset
@@ -176,6 +174,33 @@ def test_learned_label_window_invariant_fires_for_daphnia(
         ["dataset=daphnia_ext", "models=[LSTM-AlarmNet]", "training.label_window=10"]
     )
     validate_config(ok)
+
+
+def test_daphnia_real_matrix_runs_validate_with_gates_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cloud real-matrix regression: daphnia non-DFA combos (indicator +
+    learned) validate with the §5.4 gate enabled. The >=100 floor is
+    DFA-specific; the real matrix runs daphnia without the CI/smoke
+    bypass env var."""
+    monkeypatch.delenv("CSD_OBSERVER_SKIP_MIN_LENGTH_GATES", raising=False)
+    config = _compose(
+        [
+            "dataset=daphnia_ext",
+            "models=[VAR-CSD,LSTM-AlarmNet]",
+            "training.label_window=10",
+        ]
+    )
+    validate_config(config)
+
+
+def test_dfa_on_short_real_dataset_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """§5.4: DFA-CSD on daphnia (min_length=20) must be rejected even
+    though the dataset is registry-known — DFA needs >= 100 samples."""
+    monkeypatch.delenv("CSD_OBSERVER_SKIP_MIN_LENGTH_GATES", raising=False)
+    cfg = _compose(["dataset=daphnia_ext", "models=[DFA-CSD]", "training=none"])
+    with pytest.raises(ValueError, match="min dataset length must be >= 100"):
+        validate_config(cfg)
 
 
 def test_tac_aligned_ramp_window_early_window_invariant() -> None:

@@ -36,10 +36,12 @@ channel into the synthetic generator. Setting them on the `dataset`
 group (`dataset.n_trajectories=16`) composes but is a silent no-op and
 is **rejected at validation** (R0.1).
 
-For ultra-fast smoke runs (skip the `n_trajectories>=3` / `max_length>=100`
-gates), set ``$env:CSD_OBSERVER_SKIP_MIN_LENGTH_GATES = "1"`` before
-launching. CI / regression tests use this; production runs should leave
-the gates enabled.
+For ultra-fast smoke runs (skip the `n_trajectories>=3` / DFA's
+`max_length>=100` gates), set ``$env:CSD_OBSERVER_SKIP_MIN_LENGTH_GATES = "1"``
+before launching. CI / regression tests use this; production runs should leave
+the gates enabled. The `max_length>=100` floor is **DFA-specific**: it fires
+only when `DFA-CSD` is in the method list, so the real-matrix daphnia runs
+(min_length=20, no DFA) validate with the gates enabled.
 
 Installed console script (same entry point):
 
@@ -108,6 +110,10 @@ the distinct name.
   now rejects `label_window > min dataset length` for learned-method runs
   (independent of the `CSD_OBSERVER_SKIP_MIN_LENGTH_GATES` bypass); use
   `training.label_window=10` (≤ `min_length=20`) for daphnia training.
+  The `min_length >= 100` gate is DFA-method-aware, so daphnia's non-DFA
+  baselines (VAR/AC1/LSTM/TCN/PatchTST — the real_matrix method lists)
+  validate without the bypass; the runner appends `training.label_window=10`
+  to daphnia training commands automatically (`runner/commands.py`).
 - Import layering is enforced by `tests/lint/test_import_graph.py`
   (R5.1): `models`/`datasets`/`outputs` import nothing inside the
   project; `orchestration` is the only layer importing `training`.

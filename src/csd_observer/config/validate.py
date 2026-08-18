@@ -8,11 +8,11 @@ real data, and off-schedule seeds all raise here.
 Method names are resolved through the model registry (the single source
 of truth per §6.1); dataset names through the dataset registry.
 
-Minimum dataset-dimension gates (``n_trajectories >= 3``,
-``max_length >= 100``) are bypassed by setting the environment variable
-``CSD_OBSERVER_SKIP_MIN_LENGTH_GATES=1``; this is intended for CI/smoke
-runs only and is documented in AGENTS.md. Production runs should leave
-the gates enabled.
+Minimum dataset-dimension gates (``n_trajectories >= 3`` and the
+DFA-specific ``max_length >= 100``) are bypassed by setting the
+environment variable ``CSD_OBSERVER_SKIP_MIN_LENGTH_GATES=1``; this is
+intended for CI/smoke runs only and is documented in AGENTS.md.
+Production runs should leave the gates enabled.
 """
 
 from __future__ import annotations
@@ -325,27 +325,41 @@ def validate_config(config: dict[str, Any]) -> None:
                 )
 
     if effective_min_length is not None and not skip_min_gates:
-        if effective_min_length < 100:
+        # ---- §5.4 MIN_LENGTH gate — DFA-specific ----
+        # DFA-CSD needs a series of at least 100 samples to be meaningful
+        # (§5.4), so the >=100 floor fires only when DFA-CSD is selected.
+        # Real datasets legitimately run the non-DFA baselines below 100:
+        # daphnia_ext is only 20-60 samples per replicate, and the real
+        # matrix's method lists deliberately exclude DFA (the VAR/AC1
+        # windows clamp to ``min(window, T)`` and the neural label_window
+        # is guarded above); a blanket <100 gate would hard-block those
+        # runs for no reason.
+        if "DFA-CSD" in methods and effective_min_length < 100:
             raise ValueError(
                 f"min dataset length must be >= 100 (DFA gate §5.4 MIN_LENGTH), "
                 f"got {effective_min_length}"
             )
 
         # ---- R2.4: window/floor invariants against the effective length ----
+        # Checked only for the methods actually selected: the model block
+        # may carry every method's hyperparameters (``model=default``), and
+        # an unselected method's window is irrelevant to the run.
         model_block = config.get("model", {})
         if isinstance(model_block, dict):
-            dfa_window = model_block.get("dfa_csd", {}).get("window_size")
-            if dfa_window is not None and int(dfa_window) > effective_min_length:
-                raise ValueError(
-                    f"model.dfa_csd.window_size {dfa_window} exceeds min dataset length "
-                    f"{effective_min_length} (DFA needs window <= series length)"
-                )
-            patch_len = model_block.get("patchtst", {}).get("patch_len")
-            if patch_len is not None and int(patch_len) > effective_min_length:
-                raise ValueError(
-                    f"model.patchtst.patch_len {patch_len} exceeds min dataset length "
-                    f"{effective_min_length} (patch_len must fit inside a trajectory)"
-                )
+            if "DFA-CSD" in methods:
+                dfa_window = model_block.get("dfa_csd", {}).get("window_size")
+                if dfa_window is not None and int(dfa_window) > effective_min_length:
+                    raise ValueError(
+                        f"model.dfa_csd.window_size {dfa_window} exceeds min dataset length "
+                        f"{effective_min_length} (DFA needs window <= series length)"
+                    )
+            if "PatchTST-AlarmNet" in methods:
+                patch_len = model_block.get("patchtst", {}).get("patch_len")
+                if patch_len is not None and int(patch_len) > effective_min_length:
+                    raise ValueError(
+                        f"model.patchtst.patch_len {patch_len} exceeds min dataset length "
+                        f"{effective_min_length} (patch_len must fit inside a trajectory)"
+                    )
 
 
 def seed_schedule(
